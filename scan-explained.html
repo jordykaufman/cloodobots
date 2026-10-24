@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How the envelope scan works · Cluedo Robot Players</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400..900&family=Figtree:wght@400..800&display=swap">
+<style>
+/* Layout: one reading column of figures, each drawn side-on so you can see what faces where. Same palette as Cluedo Robot Players. */
+:root {
+  --bg: #E8ECF0;
+  --surface: #FFFFFF;
+  --surface-2: #F1F3F6;
+  --ink: #172030;
+  --muted: #566173;
+  --line: #CBD3DC;
+  --accent: #8B1C2D;
+  --good: #2D6A44;
+  --bad: #B0281F;
+  --font-display: "Bodoni Moda", Didot, "Bodoni 72", "Times New Roman", serif;
+  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E131B; --surface: #161D28; --surface-2: #1F2836; --ink: #E6E9EF; --muted: #98A2B3; --line: #2A3444;
+    --accent: #E2677A; --good: #73C493; --bad: #F2806F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E131B; --surface: #161D28; --surface-2: #1F2836; --ink: #E6E9EF; --muted: #98A2B3; --line: #2A3444;
+  --accent: #E2677A; --good: #73C493; --bad: #F2806F;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.55 var(--font-body); }
+main {
+  max-width: 680px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px;
+}
+h1, h2, p, ol, figure { margin: 0; }
+.head { display: grid; gap: 10px; }
+.eyebrow a { color: inherit; }
+.eyebrow { font: 700 .74rem/1.2 var(--font-body); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(2rem, 8vw, 2.8rem)/1.05 var(--font-display); text-wrap: balance; }
+h2 { font: 700 1.15rem/1.3 var(--font-body); text-wrap: balance; }
+.lede { font-size: 1.08rem; color: var(--muted); max-width: 60ch; }
+section { display: grid; gap: 14px; }
+
+figure { display: grid; gap: 10px; }
+.plate { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.plate svg { display: block; width: 100%; height: auto; }
+figcaption { color: var(--muted); font-size: .95rem; max-width: 60ch; }
+figcaption strong { color: var(--ink); }
+
+/* drawing parts */
+.d-table { fill: var(--surface-2); stroke: var(--muted); stroke-width: 1.5; }
+.d-phone { fill: var(--surface); stroke: var(--ink); stroke-width: 1.6; }
+.d-screen { fill: var(--ink); }
+.d-glow { fill: var(--accent); fill-opacity: .25; stroke: var(--accent); stroke-width: 1.5; }
+.d-back { fill: var(--ink); }
+.d-face { fill: var(--accent); }
+.d-cone { fill: var(--accent); fill-opacity: .13; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.d-sight { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 2 5; stroke-linecap: round; fill: none; }
+.d-sight-bad { stroke: var(--bad); stroke-width: 2; stroke-dasharray: 2 5; stroke-linecap: round; fill: none; }
+.d-skin { fill: var(--surface-2); stroke: var(--ink); stroke-width: 1.6; }
+.d-arm { stroke: var(--line); stroke-width: 13; stroke-linecap: round; fill: none; }
+.d-eye { fill: var(--ink); }
+.d-leader { stroke: var(--muted); stroke-width: 1; fill: none; }
+.d-dim { stroke: var(--ink); stroke-width: 1.2; fill: none; }
+.d-wave { stroke: var(--good); stroke-width: 1.6; stroke-linecap: round; fill: none; }
+.d-label { fill: var(--ink); font: 700 15px var(--font-body); }
+.d-sub { fill: var(--muted); font: 500 13.5px var(--font-body); }
+.d-good { fill: var(--good); font: 700 13.5px var(--font-body); }
+.d-bad { fill: var(--bad); font: 700 14px var(--font-body); }
+
+/* who sees what */
+.views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.view { display: grid; gap: 8px; align-content: start; }
+.view-label { font: 700 .72rem/1.2 var(--font-body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.view-box {
+  aspect-ratio: 5 / 7; max-width: 100%; border-radius: 10px; border: 1px solid var(--line);
+  display: grid; place-items: center; text-align: center; padding: 8px;
+}
+.view-back {
+  background-color: var(--ink);
+  background-image:
+    repeating-linear-gradient(45deg, transparent 0 7px, color-mix(in srgb, var(--bg) 22%, transparent) 7px 8px),
+    repeating-linear-gradient(-45deg, transparent 0 7px, color-mix(in srgb, var(--bg) 22%, transparent) 7px 8px);
+}
+.view-face { background: var(--surface); box-shadow: inset 0 0 0 5px var(--surface), inset 0 0 0 6.5px var(--accent); }
+.view-face span { font: 700 clamp(.85rem, 3.8vw, 1.15rem)/1.1 var(--font-display); color: var(--ink); }
+.view-face small { display: block; font: 700 .55rem/1 var(--font-body); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+.view-screen { background: var(--ink); color: var(--bg); border-radius: 16px; border-width: 4px; border-color: var(--muted); }
+.view-screen span { font: 700 clamp(.8rem, 3.4vw, 1rem)/1.3 var(--font-body); }
+.view p { font-size: .88rem; color: var(--muted); }
+
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 14px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 10px; }
+.steps li::before { content: counter(s); font: 700 1.6rem/1 var(--font-display); color: var(--accent); }
+.note { padding: 14px 16px; border-radius: 10px; border: 1px dashed var(--line); color: var(--muted); font-size: .95rem; }
+</style>
+</head>
+<body>
+<main>
+  <header class="head">
+    <p class="eyebrow"><a href="./">Cluedo Robot Players</a></p>
+    <h1>How the envelope scan works</h1>
+    <p class="lede">The phone reads each envelope card without showing it to anyone, including the person holding the card. The trick is which way everything faces.</p>
+  </header>
+
+  <section>
+    <h2>The scan, seen from the side</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 440 330" role="img" aria-label="Side view: the phone lies face-down on the table with its camera pointing up. A person holds a card face-down a hand's width above it. The person sees only the back of the card, the camera sees only the face, and the screen is pressed against the table.">
+          <!-- table -->
+          <rect class="d-table" x="8" y="300" width="404" height="12" rx="3"/>
+          <text class="d-sub" x="16" y="326">table</text>
+
+          <!-- camera's view: lens up to the card face -->
+          <polygon class="d-cone" points="141,278 104,158 244,158"/>
+
+          <!-- phone lying face-down -->
+          <rect class="d-phone" x="120" y="283" width="132" height="17" rx="5"/>
+          <rect class="d-screen" x="124" y="295" width="124" height="5" rx="2"/>
+          <rect class="d-phone" x="131" y="277" width="20" height="7" rx="2"/>
+
+          <!-- beep -->
+          <path class="d-wave" d="M112 286 q-5 5 0 10 M106 282 q-9 9 0 18"/>
+          <text class="d-good" x="100" y="295" text-anchor="end">beep</text>
+
+          <!-- person -->
+          <text class="d-label" x="52" y="30" text-anchor="middle">You</text>
+          <path class="d-arm" d="M62 98 L92 146"/>
+          <circle class="d-skin" cx="52" cy="64" r="22"/>
+          <ellipse class="d-eye" cx="64" cy="72" rx="3.2" ry="3.2"/>
+
+          <!-- your line of sight lands on the back -->
+          <line class="d-sight" x1="67" y1="76" x2="116" y2="146"/>
+          <line class="d-sight" x1="67" y1="76" x2="244" y2="146"/>
+
+          <!-- card held face-down: back on top, face underneath -->
+          <rect class="d-back" x="96" y="148" width="150" height="4.5" rx="1"/>
+          <rect class="d-face" x="96" y="152.5" width="150" height="4.5" rx="1"/>
+          <rect class="d-skin" x="82" y="139" width="30" height="26" rx="11"/>
+
+          <!-- distance -->
+          <line class="d-dim" x1="88" y1="172" x2="88" y2="270"/>
+          <line class="d-dim" x1="82" y1="172" x2="94" y2="172"/>
+          <line class="d-dim" x1="82" y1="270" x2="94" y2="270"/>
+          <text class="d-label" x="78" y="218" text-anchor="end">10–15</text>
+          <text class="d-sub" x="78" y="233" text-anchor="end">cm</text>
+
+          <!-- labels -->
+          <line class="d-leader" x1="294" y1="132" x2="249" y2="149"/>
+          <text class="d-label" x="298" y="134">Back of card</text>
+          <text class="d-sub" x="298" y="151">all you see</text>
+
+          <line class="d-leader" x1="294" y1="182" x2="249" y2="156"/>
+          <text class="d-label" x="298" y="186">Face of card</text>
+          <text class="d-sub" x="298" y="203">camera sees it</text>
+
+          <line class="d-leader" x1="294" y1="232" x2="203" y2="214"/>
+          <text class="d-label" x="298" y="236">Camera</text>
+          <text class="d-sub" x="298" y="253">points up</text>
+
+          <line class="d-leader" x1="294" y1="268" x2="252" y2="290"/>
+          <text class="d-label" x="298" y="272">Screen</text>
+          <text class="d-sub" x="298" y="289">face-down</text>
+        </svg>
+      </div>
+      <figcaption><strong>Everything is upside down on purpose.</strong> The phone lies screen-down, so its back camera points at the ceiling. You hold the card picture-side down above it. Your eyes land on the back, the camera looks up at the face, and the screen is hidden against the table.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Who sees what</h2>
+    <div class="views">
+      <div class="view">
+        <span class="view-label">You</span>
+        <div class="view-box view-back" role="img" aria-label="The patterned back of a card"></div>
+        <p>The back. It looks the same on every card.</p>
+      </div>
+      <div class="view">
+        <span class="view-label">The camera</span>
+        <div class="view-box view-face" role="img" aria-label="The face of a suspect card, Colonel Mustard"><span><small>Suspect</small>Colonel Mustard</span></div>
+        <p>The face. The app reads the name, then forgets the picture.</p>
+      </div>
+      <div class="view">
+        <span class="view-label">The screen</span>
+        <div class="view-box view-screen" role="img" aria-label="Phone screen showing only: Card 1 of 3, done"><span>Card 1 of 3 ✓</span></div>
+        <p>Only progress, never the card. And it’s face-down anyway.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why a normal camera app wouldn’t work</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 420 200" role="img" aria-label="Side view of a normal photo: the person holds the phone up with the screen facing them and the camera facing the card. The viewfinder on the screen shows the card's face, so the person sees it.">
+          <!-- person -->
+          <text class="d-label" x="48" y="56" text-anchor="middle">You</text>
+          <circle class="d-skin" cx="48" cy="96" r="22"/>
+          <ellipse class="d-eye" cx="61" cy="94" rx="3.2" ry="3.2"/>
+
+          <!-- camera's view to the card -->
+          <polygon class="d-cone" points="146,72 298,58 298,142"/>
+
+          <!-- phone held upright, screen toward you -->
+          <rect class="d-phone" x="130" y="46" width="16" height="104" rx="5"/>
+          <rect class="d-glow" x="126" y="52" width="6" height="92" rx="2"/>
+          <rect class="d-phone" x="146" y="64" width="6" height="16" rx="2"/>
+
+          <!-- card standing, face toward the camera -->
+          <rect class="d-face" x="298" y="58" width="5" height="84" rx="1"/>
+          <rect class="d-back" x="303" y="58" width="5" height="84" rx="1"/>
+
+          <!-- your sight lands on the viewfinder -->
+          <line class="d-sight-bad" x1="66" y1="94" x2="122" y2="96"/>
+
+          <!-- labels -->
+          <line class="d-leader" x1="122" y1="166" x2="128" y2="146"/>
+          <text class="d-bad" x="60" y="182">The viewfinder shows the face,</text>
+          <text class="d-bad" x="60" y="197">so you see the card</text>
+          <text class="d-label" x="318" y="96">Face toward</text>
+          <text class="d-label" x="318" y="111">the camera</text>
+        </svg>
+      </div>
+      <figcaption><strong>The usual way gives it away.</strong> To take a normal photo you hold the screen toward your face, and the screen shows exactly what the camera sees. Phones also show the finished photo for you to approve. The scan avoids both by never drawing the picture at all.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>At the table</h2>
+    <ol class="steps">
+      <li><p>Fill the envelope as usual but don’t seal it. Take its three cards out face-down, without looking.</p></li>
+      <li><p>In the app, tap <strong>Scan the envelope</strong>, then <strong>Start scanning</strong>, and lay the phone face-down on the table.</p></li>
+      <li><p>Hold one card face-down about a hand’s width above the phone. Keep it still until it beeps.</p></li>
+      <li><p>Do the same with the other two cards, then put all three back in the envelope and seal it.</p></li>
+    </ol>
+    <p class="note">If a card won’t read, check the room is well lit and try holding it a little higher or lower. You can always tap <strong>Let the app pick the answer</strong> instead; the game works the same, the paper envelope just isn’t used.</p>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "cluedo-robot-players",
+  "private": true,
+  "type": "module",
+  "description": "Robot players for a real game of Cluedo: they're dealt cards and answer suggestions.",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}
