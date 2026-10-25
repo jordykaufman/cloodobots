@@ -46,3 +46,10 @@ Runs the rule and name-matching tests with Node's built-in test runner. No insta
 - The scanner was tuned on simulated camera views of photos of the real 2013 cards, where it read 83% of single frames correctly and never misread one, and it reads frames continuously while a card is held. It hasn't been tried with a real phone camera yet. Lighting and how high you hold the card will matter. The torch turns on automatically where the phone allows it.
 - Card names in the setup must match what's printed on your cards, so the scanner can recognise them.
 - Joining phones need to reach PeerJS's public server and a direct connection to the host phone. That works on most home Wi-Fi, but some networks block it.
+
+## Ideas for later
+
+- **Keep the card photos off the internet.** The photos in `cards/clue2013/` are served publicly with the site. Instead, the host phone could load them once from its photo library, the browser would keep them, and joined phones would get them from the host over the game link.
+- **NFC stickers instead of the camera.** A sticker on the back of every card would let the envelope be scanned by tapping each card against the phone. Web pages can only read NFC in Chrome on Android, not on iPhones.
+- **The beach board.** Photos of its six rooms are already in `cards/clue2013/`; it needs a card set with those rooms.
+- **Robots as full players** that move and make their own suggestions.
