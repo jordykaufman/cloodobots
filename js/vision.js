@@ -188,16 +188,104 @@ export function stretch(img) {
   return { gray: out, w: img.w, h: img.h };
 }
 
+// Finds boxes on an upright card that look like a line of printed text: a short, wide
+// run of letter strokes standing on its own. A card's name sits on a plain banner or
+// a dark background, so it comes out as its own box, apart from the busy picture.
+// Only the bottom part of the card, from `from` (a fraction of its height) down, is
+// searched: names are printed along the bottom, and an upside-down card is handled by
+// cutting it out the other way up. Returns up to `max` boxes, most text-like first, in
+// the card image's coordinates.
+export function textBoxes(card, max = 3, from = 0.7) {
+  const top = Math.floor(card.h * from);
+  const img = { gray: card.gray.subarray(top * card.w), w: card.w, h: card.h - top };
+  const { gray, w } = img, h = img.h, cardH = card.h;
+  const strokes = new Uint8Array(w * h);
+  const gx = new Uint8Array(w * h);
+  const hist = new Uint32Array(256);
+  for (let y = 0; y < h; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const v = Math.abs(gray[y * w + x + 1] - gray[y * w + x - 1]);
+      gx[y * w + x] = v; hist[v]++;
+    }
+  }
+  // Strong upright edges: the top 12% of them, and never faint ones.
+  let acc = 0, thr = 255;
+  const total = w * h;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > total * 0.12) { thr = v; break; } }
+  thr = Math.max(28, thr);
+  for (let i = 0; i < total; i++) if (gx[i] >= thr) strokes[i] = 1;
+  // Smear strokes sideways so the letters of a word join up, and a little up and down.
+  const rx = Math.max(3, Math.round(w * 0.022)), ry = Math.max(1, Math.round(cardH * 0.004));
+  const across = new Uint8Array(total);
+  for (let y = 0; y < h; y++) {
+    let last = -1e9;
+    for (let x = 0; x < w; x++) { if (strokes[y * w + x]) last = x; if (x - last <= rx) across[y * w + x] = 1; }
+    last = 1e9;
+    for (let x = w - 1; x >= 0; x--) { if (strokes[y * w + x]) last = x; if (last - x <= rx) across[y * w + x] = 1; }
+  }
+  const mask = new Uint8Array(total);
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      if (!across[y * w + x]) continue;
+      for (let d = -ry; d <= ry; d++) { const yy = y + d; if (yy >= 0 && yy < h) mask[yy * w + x] = 1; }
+    }
+  }
+  const seen = new Uint8Array(total);
+  const boxes = [];
+  for (let start = 0; start < total; start++) {
+    if (!mask[start] || seen[start]) continue;
+    let x0 = w, y0 = h, x1 = 0, y1 = 0, n = 0, ink = 0;
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const i = stack.pop(), x = i % w, y = (i / w) | 0;
+      n++; ink += strokes[i];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && mask[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; stack.push(i - 1); }
+      if (x < w - 1 && mask[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; stack.push(i + 1); }
+      if (y > 0 && mask[i - w] && !seen[i - w]) { seen[i - w] = 1; stack.push(i - w); }
+      if (y < h - 1 && mask[i + w] && !seen[i + w]) { seen[i + w] = 1; stack.push(i + w); }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bh < cardH * 0.02 || bh > cardH * 0.11 || bw < w * 0.12 || bw / bh < 2.2) continue;
+    const fill = n / (bw * bh), density = ink / (bw * bh);
+    if (fill < 0.45 || density < 0.06) continue;
+    boxes.push({ x0, y0: y0 + top, x1, y1: y1 + top, score: ink * fill });
+  }
+  boxes.sort((a, b) => b.score - a.score);
+  return boxes.slice(0, max);
+}
+
+// Cuts a box out of an image with some room around it.
+export function crop(img, box, padX = 0.12, padY = 0.45) {
+  const bw = box.x1 - box.x0 + 1, bh = box.y1 - box.y0 + 1;
+  const x0 = Math.max(0, Math.floor(box.x0 - bw * padX)), x1 = Math.min(img.w, Math.ceil(box.x1 + 1 + bw * padX));
+  const y0 = Math.max(0, Math.floor(box.y0 - bh * padY)), y1 = Math.min(img.h, Math.ceil(box.y1 + 1 + bh * padY));
+  const w = x1 - x0, h = y1 - y0, gray = new Uint8ClampedArray(w * h);
+  for (let y = 0; y < h; y++) gray.set(img.gray.subarray((y0 + y) * img.w + x0, (y0 + y) * img.w + x0 + w), y * w);
+  return { gray, w, h };
+}
+
+// Where most cards print their name: across the middle of the card, just above the
+// bottom edge. Fractions of the cut-out, which has a little room around the card.
+export const NAME_SPOT = { x0: 0.22, x1: 0.78, y0: 0.79, y1: 0.91 };
+export function nameSpot(card) {
+  return { x0: Math.round(card.w * NAME_SPOT.x0), x1: Math.round(card.w * NAME_SPOT.x1), y0: Math.round(card.h * NAME_SPOT.y0), y1: Math.round(card.h * NAME_SPOT.y1) };
+}
+export const TURNS = [0, Math.PI, Math.PI / 2, -Math.PI / 2];
+export const sideways = turn => Math.abs(Math.sin(turn)) > 0.5;
+
 // A horizontal band of the image, from `top` to `bottom` as fractions of its height.
 export function band(img, top, bottom) {
   const y0 = Math.max(0, Math.floor(img.h * top)), y1 = Math.min(img.h, Math.ceil(img.h * bottom));
   return { gray: img.gray.slice(y0 * img.w, y1 * img.w), w: img.w, h: y1 - y0 };
 }
 
-// What to read, cheapest and most likely first. Card names are printed in a band at the
-// bottom (or on some editions the top), so read a narrow band at each end of the card,
-// both ways up, then wider bands; then the narrow bands with the card turned sideways,
-// in case its long side was misjudged; then the whole card as a last resort. `mode` is
+// If neither the name boxes nor the name spot read, these are tried in turn. Card names
+// are printed in a band at the bottom (or on some editions the top), so read a narrow
+// band at each end of the card, both ways up, then wider bands; then the narrow bands
+// with the card turned sideways, in case its long side was misjudged; then the whole
+// card as a last resort. `mode` is
 // the text reader's layout setting: 6 reads one block of text, 11 hunts for scattered
 // text. The reader copes with light lettering on a dark banner by itself.
 const NARROW = [[0.75, 1], [0, 0.25]], WIDE = [[0.6, 1], [0, 0.4]];

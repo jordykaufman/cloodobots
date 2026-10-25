@@ -1,7 +1,7 @@
 // Reads envelope cards with the camera without ever showing them. The camera picture is
 // drawn only to off-screen canvases; the screen shows progress and nothing else.
 
-import { grayFromRGBA, shrink, findCard, cutOut, band, READ_PLAN } from './vision.js';
+import { grayFromRGBA, shrink, findCard, cutOut, band, crop, textBoxes, nameSpot, READ_PLAN, TURNS, sideways } from './vision.js';
 import { matchCard, isSure } from './match.js';
 import { loadScript, sleep, lib } from './util.js';
 
@@ -82,6 +82,38 @@ export async function startScanner({ cards, onStatus, onCard }) {
     return { text: res.text, words };
   };
 
+  const tryRead = async (img, m) => {
+    if (mode !== m) { await worker.setParameters({ tessedit_pageseg_mode: m }); mode = m; }
+    const r = await read(img);
+    return matchCard(r.text, cards, r.words);
+  };
+  // Reads the card's name: first from boxes that look like a line of text near the
+  // bottom of the card, then from the spot where names are usually printed, each way
+  // up, starting with the way that worked last time; then wider bands as a last resort.
+  const readCard = async (full, box) => {
+    const cuts = new Map();
+    const cut = t => { if (!cuts.has(t)) cuts.set(t, cutOut(full, box, t)); return cuts.get(t); };
+    const order = lucky == null ? TURNS : [lucky, ...TURNS.filter(t => t !== lucky)];
+    for (const turn of order) {
+      if (!running) return null;
+      const card = cut(turn);
+      for (const b of textBoxes(card)) {
+        const m = await tryRead(crop(card, b), '7');
+        if (m) { lucky = turn; return m; }
+      }
+      if (!sideways(turn)) {
+        const m = await tryRead(crop(card, nameSpot(card), 0, 0), '7');
+        if (m) { lucky = turn; return m; }
+      }
+    }
+    for (const step of READ_PLAN) {
+      if (!running) return null;
+      const m = await tryRead(band(cut(step.turn), step.top, step.bottom), step.mode);
+      if (m) { lucky = step.turn; return m; }
+    }
+    return null;
+  };
+
   (async () => {
     while (running) {
       const w = video.videoWidth, h = video.videoHeight;
@@ -95,18 +127,7 @@ export async function startScanner({ cards, onStatus, onCard }) {
       onStatus('reading');
       const s = small.scale;
       const box = { cx: f.cx * s + (s - 1) / 2, cy: f.cy * s + (s - 1) / 2, angle: f.angle, long: f.long * s, short: f.short * s };
-      const cuts = new Map();
-      let hit = null;
-      // The way up that worked last time usually works again, so try it first.
-      const plan = lucky == null ? READ_PLAN : [READ_PLAN[lucky], ...READ_PLAN.filter((_, i) => i !== lucky)];
-      for (const step of plan) {
-        if (!running) break;
-        if (!cuts.has(step.turn)) cuts.set(step.turn, cutOut(full, box, step.turn));
-        if (mode !== step.mode) { await worker.setParameters({ tessedit_pageseg_mode: step.mode }); mode = step.mode; }
-        const r = await read(band(cuts.get(step.turn), step.top, step.bottom));
-        const m = matchCard(r.text, cards, r.words);
-        if (m) { hit = m; lucky = READ_PLAN.indexOf(step); break; }
-      }
+      const hit = await readCard(full, box);
       if (!running) break;
       if (hit && (last === hit.card.id || isSure(hit))) { last = null; onCard(hit.card); }
       else last = hit ? hit.card.id : null;

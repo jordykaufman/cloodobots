@@ -23,6 +23,10 @@ export const who = s => `<span class="who${s.robot ? ' who--bot' : ''}">${icon(s
 const cc = c => `<span class="cc cc--${c.cat}">${icon(c.cat)}<span>${esc(c.name)}</span></span>`;
 const brand = () => `<p class="brand">${icon('glass')}<span>Cluedo Robot Players</span></p>`;
 function pcard(c, mods = '') {
+  if (c.art) {
+    return `<span class="pcard pcard--photo pcard--${c.cat} ${mods}" role="img" aria-label="${CAT[c.cat]}: ${esc(c.name)}">
+      <img src="${esc(c.art)}" alt="" loading="lazy" decoding="async"></span>`;
+  }
   return `<span class="pcard pcard--${c.cat} ${mods}" role="img" aria-label="${CAT[c.cat]}: ${esc(c.name)}">
     <span class="pcard-cat" aria-hidden="true">${CAT[c.cat]}</span>
     <span class="pcard-mid" aria-hidden="true">${icon(c.cat)}<span class="pcard-name">${esc(c.name)}</span></span>

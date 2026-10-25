@@ -7,10 +7,10 @@ export const CAT = { suspect: 'Suspect', weapon: 'Weapon', room: 'Room' };
 export const CATS_PL = { suspect: 'Suspects', weapon: 'Weapons', room: 'Rooms' };
 const ROOMS = ['Kitchen', 'Ballroom', 'Conservatory', 'Dining Room', 'Billiard Room', 'Library', 'Lounge', 'Hall', 'Study'];
 export const EDITIONS = {
-  clue2013: { label: 'Clue (2013, photo cards)', cards: {
+  clue2013: { label: 'Clue (2013)', art: 'cards/clue2013/', cards: {
     suspect: ['Scarlet', 'Mustard', 'White', 'Green', 'Peacock', 'Plum'],
     weapon: ['Candlestick', 'Dagger', 'Lead Pipe', 'Pistol', 'Rope', 'Wrench'],
-    room: ROOMS } },
+    room: ['Bathroom', 'Bedroom', 'Courtyard', 'Dining Room', 'Game Room', 'Garage', 'Kitchen', 'Living Room', 'Office'] } },
   cluedo: { label: 'Cluedo (classic)', cards: {
     suspect: ['Miss Scarlett', 'Colonel Mustard', 'Mrs White', 'Reverend Green', 'Mrs Peacock', 'Professor Plum'],
     weapon: ['Candlestick', 'Dagger', 'Lead Piping', 'Revolver', 'Rope', 'Spanner'],
@@ -20,6 +20,18 @@ export const EDITIONS = {
     weapon: ['Candlestick', 'Knife', 'Lead Pipe', 'Revolver', 'Rope', 'Wrench'],
     room: ROOMS } },
 };
+// Photos of a deck's cards, where we have them: cards/<deck>/<type>_<name>.jpg, e.g.
+// cards/clue2013/room_dining_room.jpg. Every 2013 card has one, beach rooms included.
+const ART_FILES = {
+  'cards/clue2013/': ['Scarlet', 'Mustard', 'White', 'Green', 'Peacock', 'Plum', 'Candlestick', 'Dagger', 'Lead Pipe', 'Pistol', 'Rope', 'Wrench',
+    'Arcade', 'Bathroom', 'Beach', 'Beach House', 'Bedroom', 'Courtyard', 'Dining Room', 'Ferris Wheel', 'Game Room', 'Garage', 'Jet Ski Rental', 'Kitchen', 'Living Room', 'Office', 'Surf Shop'],
+};
+function artFor(edition, card) {
+  const dir = EDITIONS[edition] && EDITIONS[edition].art;
+  if (!dir || !ART_FILES[dir].includes(card.name)) return null;
+  return `${dir}${card.cat}_${card.name.toLowerCase().replace(/[^a-z]+/g, '_')}.jpg`;
+}
+
 export const ROBOT_NAMES = ['Butler Bot', 'Lady Gigabyte', 'Sergeant Sprocket', 'Professor Pixel', 'Madame Modem', 'Captain Circuit'];
 export const HOST = 'host';
 
@@ -129,6 +141,7 @@ export function startGame(state) {
   const st = state.setup;
   const deck = [];
   CATS.forEach(cat => cleanList(st.cards[cat]).forEach((name, i) => deck.push({ id: cat[0] + i, name, cat })));
+  for (const c of deck) { const art = artFor(st.edition, c); if (art) c.art = art; }
   const seats = st.seats.map(s => ({ id: s.id, name: s.name.trim(), robot: s.robot, hand: [], out: false }));
   const g = {
     deck, seats, counts: dealCounts(seats, deck.length - 3),
