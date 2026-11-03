@@ -2,7 +2,7 @@
 // cards lying face-down, and works out which cards lie in which row. Everything works
 // on a plain grayscale array, so the same code runs in the browser and in the tests.
 
-import { MARKERS, DECOY } from './markers.js';
+import { MARKERS, DECOY, CORNER_MARKS, CARD_CORNERS, CARD_MARKERS } from './markers.js';
 
 const CODES = MARKERS.map(s => Uint8Array.from(s, ch => (ch === '1' ? 1 : 0)));
 
@@ -210,6 +210,16 @@ export function findMarkers(img) {
 
 /* ---------- from markers to cards and rows ---------- */
 
+// One millimetre along the card's right and down directions, in photo pixels, taken
+// from a marker's edges. Measuring each direction on its own copes with a photo taken
+// at an angle, which squashes marks more one way than the other.
+function mmSteps(m) {
+  const [tl, tr, br, bl] = m.corners, k = 2 * CARD.marker;
+  const right = [(tr[0] - tl[0] + br[0] - bl[0]) / k, (tr[1] - tl[1] + br[1] - bl[1]) / k];
+  const down = [(bl[0] - tl[0] + br[0] - tr[0]) / k, (bl[1] - tl[1] + br[1] - tr[1]) / k];
+  return { right, down, s: (Math.hypot(...right) + Math.hypot(...down)) / 2 };
+}
+
 // Each card's code is printed twice; the decoy is ignored. A marker's size and which
 // way it faces say where the middle of its card is, so a card is found from either
 // marker. Returns cards { id, centre, axis (along the card's long side), mm (pixels
@@ -217,12 +227,9 @@ export function findMarkers(img) {
 export function cardsFrom(markers) {
   const byId = new Map();
   for (const m of markers) {
-    if (m.id === DECOY) continue;
-    const [tl, tr, , bl] = m.corners;
-    const s = m.side / CARD.marker;
-    const right = [(tr[0] - tl[0]) / m.side, (tr[1] - tl[1]) / m.side];
-    const down = [(bl[0] - tl[0]) / m.side, (bl[1] - tl[1]) / m.side];
-    const centre = [m.centre[0] + (right[0] * TO_CENTRE.right + down[0] * TO_CENTRE.down) * s, m.centre[1] + (right[1] * TO_CENTRE.right + down[1] * TO_CENTRE.down) * s];
+    if (m.id === DECOY || CORNER_MARKS.includes(m.id)) continue;
+    const { right, down, s } = mmSteps(m);
+    const centre = [m.centre[0] + right[0] * TO_CENTRE.right + down[0] * TO_CENTRE.down, m.centre[1] + right[1] * TO_CENTRE.right + down[1] * TO_CENTRE.down];
     if (!byId.has(m.id)) byId.set(m.id, []);
     byId.get(m.id).push({ centre, down, s });
   }
@@ -251,6 +258,70 @@ export function cardsFrom(markers) {
   return { cards, doubles };
 }
 
+// The corner-mark layout: every card carries marks 1-4, one per corner, all facing the
+// card's top, and which corner holds which number tells the cards apart. A mark on its
+// own doesn't say which corner it's in, so each mark guesses all four, each guess
+// putting the card's centre somewhere; the marks of one card agree on one spot. Three
+// marks are enough, because the fourth corner holds whichever number is left over.
+// Returns cards like cardsFrom does, using the same ids as the single-code layout,
+// plus `unread`: places where marks clearly form a card that couldn't be told apart.
+const CORNER_SPOTS = [[-1, -1], [-1, 1], [1, 1], [1, -1]].map(([x, y]) => [x * TO_CENTRE.right, y * TO_CENTRE.down]);
+const CARD_BY_CORNERS = Object.fromEntries(Object.entries(CARD_CORNERS).map(([name, order]) => [order, CARD_MARKERS[name]]));
+
+export function cardsFromCorners(markers) {
+  const marks = markers.filter(m => CORNER_MARKS.includes(m.id)).map(m => {
+    const { right, down, s } = mmSteps(m);
+    const r = Math.hypot(...right);
+    return { number: CORNER_MARKS.indexOf(m.id) + 1, right, down, s, facing: [right[0] / r, right[1] / r], centre: m.centre };
+  });
+  const guesses = [];
+  marks.forEach((k, i) => CORNER_SPOTS.forEach(([dx, dy], corner) => guesses.push({
+    i, corner, k,
+    x: k.centre[0] - (k.right[0] * dx + k.down[0] * dy),
+    y: k.centre[1] - (k.right[1] * dx + k.down[1] * dy),
+  })));
+  const taken = new Set(), cards = [], unread = [];
+  for (;;) {
+    let best = null;
+    for (const g of guesses) {
+      if (taken.has(g.i)) continue;
+      // Marks of one card face the same way, sit in different corners and carry
+      // different numbers.
+      const members = new Map(), corners = new Set(), numbers = new Set();
+      for (const h of guesses) {
+        if (taken.has(h.i) || members.has(h.i)) continue;
+        if (Math.hypot(h.x - g.x, h.y - g.y) > 7 * g.k.s) continue;
+        if (h.k.facing[0] * g.k.facing[0] + h.k.facing[1] * g.k.facing[1] < 0.85) continue;
+        if (corners.has(h.corner) || numbers.has(h.k.number)) continue;
+        members.set(h.i, h); corners.add(h.corner); numbers.add(h.k.number);
+      }
+      if (!best || members.size > best.size) best = members;
+    }
+    if (!best || best.size < 2) break;
+    const ms = [...best.values()];
+    ms.forEach(h => taken.add(h.i));
+    const order = [0, 0, 0, 0];
+    for (const h of ms) order[h.corner] = h.k.number;
+    const left = [1, 2, 3, 4].filter(n => !order.includes(n));
+    const gaps = order.map((n, i) => (n ? -1 : i)).filter(i => i >= 0);
+    // Fill the empty corners every possible way; keep the fills that name a card.
+    const fills = [];
+    const fill = (o, rest, at) => {
+      if (at === gaps.length) { const key = o.join(''); if (CARD_BY_CORNERS[key]) fills.push(CARD_BY_CORNERS[key]); return; }
+      rest.forEach((n, j) => { o[gaps[at]] = n; fill(o, rest.filter((_, q) => q !== j), at + 1); o[gaps[at]] = 0; });
+    };
+    fill(order.slice(), left, 0);
+    const centre = [ms.reduce((t, h) => t + h.x, 0) / ms.length, ms.reduce((t, h) => t + h.y, 0) / ms.length];
+    const mm = ms.reduce((t, h) => t + h.k.s, 0) / ms.length;
+    const d = ms[0].k.down, dl = Math.hypot(...d);
+    const card = { centre, axis: [d[0] / dl, d[1] / dl], mm, markers: ms.length };
+    if (fills.length === 1) cards.push({ id: fills[0], ...card });
+    else unread.push({ ...card, candidates: fills });
+  }
+  const loose = marks.filter((_, i) => !taken.has(i)).map(k => ({ number: k.number, centre: k.centre, mm: k.s }));
+  return { cards, unread, loose };
+}
+
 // Groups cards into rows. Rows run across the cards' short side; they're listed from
 // the top of the photo down, each from left to right.
 export function rowsOf(cards) {
@@ -275,9 +346,29 @@ export function rowsOf(cards) {
   return rows.map(r => r.sort((p, q) => p.along - q.along).map(p => p.c));
 }
 
-// The whole job: a photo in, rows of card ids out.
+// The whole job: a photo in, rows of card ids out. Cards of either layout can be mixed.
 export function readLayout(img) {
   const markers = findMarkers(img);
-  const { cards, doubles } = cardsFrom(markers);
-  return { markers, cards, doubles, rows: rowsOf(cards) };
+  const single = cardsFrom(markers);
+  const corner = cardsFromCorners(markers);
+  const cards = single.cards.concat(corner.cards);
+  // A card with only two corners readable could be one of two cards. If all but one of
+  // those are lying elsewhere in the photo, it's the one left.
+  let unread = corner.unread;
+  for (let changed = true; changed;) {
+    changed = false;
+    const seen = new Set(cards.map(c => c.id));
+    unread = unread.filter(u => {
+      const left = u.candidates.filter(id => !seen.has(id));
+      if (left.length !== 1) return true;
+      cards.push({ id: left[0], centre: u.centre, axis: u.axis, mm: u.mm, markers: u.markers });
+      seen.add(left[0]);
+      changed = true;
+      return false;
+    });
+  }
+  const counts = new Map();
+  for (const c of cards) counts.set(c.id, (counts.get(c.id) || 0) + 1);
+  const doubles = [...new Set([...single.doubles, ...[...counts].filter(([, n]) => n > 1).map(([id]) => id)])];
+  return { markers, cards, doubles, unread, rows: rowsOf(cards) };
 }

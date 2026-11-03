@@ -1,11 +1,12 @@
 // The card back reader test page: one photo in, what the reader found out.
 
 import { grayOf, readLayout } from './backs.js';
-import { CARD_MARKERS, DECOY } from './markers.js';
+import { CARD_MARKERS, DECOY, CORNER_MARKS } from './markers.js';
 import { esc } from './util.js';
 
 const NAME = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
 const FIRST_TEST = 22, SIZES = [6, 8, 10, 12], SHADES = [100, 75, 50];
+const isTest = id => id >= FIRST_TEST && !CORNER_MARKS.includes(id);
 // Phones take photos of up to 48 megapixels; 12 is plenty, and browsers on phones
 // refuse canvases much bigger than that.
 const MAX_SIDE = 4032;
@@ -43,7 +44,7 @@ function draw(photo, res) {
   ctx.drawImage(photo.canvas, 0, 0, shot.width, shot.height);
   const lw = Math.max(2, shot.width / 400);
   for (const m of res.markers) {
-    ctx.strokeStyle = m.id === DECOY ? '#9AA4B2' : m.id >= FIRST_TEST ? '#3A7BD5' : '#2D9C5B';
+    ctx.strokeStyle = m.id === DECOY ? '#9AA4B2' : isTest(m.id) ? '#3A7BD5' : '#2D9C5B';
     ctx.lineWidth = lw;
     ctx.beginPath();
     m.corners.forEach(([x, y], i) => (i ? ctx.lineTo(x * scale, y * scale) : ctx.moveTo(x * scale, y * scale)));
@@ -54,7 +55,7 @@ function draw(photo, res) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   res.rows.forEach((row, r) => row.forEach((card, i) => {
-    if (card.id >= FIRST_TEST) return;
+    if (!NAME[card.id]) return;
     const [x, y] = card.centre;
     const label = `${r + 1}·${i + 1}`;
     ctx.fillStyle = 'rgba(255,255,255,.9)';
@@ -67,7 +68,7 @@ function draw(photo, res) {
 
 function show(photo, res, ms) {
   const cards = res.cards.filter(c => NAME[c.id]);
-  const tests = new Set(res.markers.map(m => m.id).filter(id => id >= FIRST_TEST));
+  const tests = new Set(res.markers.map(m => m.id).filter(isTest));
   const rows = res.rows.map(r => r.filter(c => NAME[c.id])).filter(r => r.length);
 
   let summary;
@@ -80,6 +81,7 @@ function show(photo, res, ms) {
   const missing = Object.entries(CARD_MARKERS).filter(([, id]) => !found.has(id)).map(([n]) => n);
   const notes = [];
   if (cards.length && missing.length && missing.length < Object.keys(CARD_MARKERS).length) notes.push(`Not found: ${missing.join(', ')}.`);
+  if (res.unread && res.unread.length) notes.push(`${res.unread.length} card${res.unread.length === 1 ? '' : 's'} seen but not identified: only two corners could be read.`);
   if (res.doubles.length) notes.push(`Seen twice in different places: ${res.doubles.map(id => NAME[id] || `marker ${id}`).join(', ')}.`);
   $('missing').textContent = notes.join(' ');
   $('missing').hidden = !notes.length;

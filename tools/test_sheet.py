@@ -13,6 +13,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 src = (ROOT / 'js' / 'markers.js').read_text()
 MARKERS = json.loads(re.search(r'MARKERS = (\[.*?\]);', src, re.S).group(1))
 CARD_MARKERS = json.loads(re.search(r'CARD_MARKERS = (\{.*?\});', src, re.S).group(1))
+CORNER_MARKS = json.loads(re.search(r'CORNER_MARKS = (\[.*?\]);', src, re.S).group(1))
+CARD_CORNERS = json.loads(re.search(r'CARD_CORNERS = (\{.*?\});', src, re.S).group(1))
 DECOY = 0
 
 NAVY = HexColor('#141B2A')
@@ -55,7 +57,7 @@ def lattice(c, x, y, w, h):
     c.setStrokeAlpha(1)
 
 
-def card_back(c, x, y, code):
+def card_back(c, x, y, code, corners=None):
     path = c.beginPath()
     path.roundRect(x, y, CARD_W, CARD_H, RADIUS)
     c.saveState()
@@ -85,10 +87,16 @@ def card_back(c, x, y, code):
     c.line(cx + 2.5 * k, cy - 2.5 * k, cx + 8.5 * k, cy - 8.5 * k)
     c.setLineCap(0)
 
-    # The card's code top-left and bottom-right (turned, so the back reads the same
-    # either way up); the decoy in the other two corners.
     left, right = x + MARKER_INSET, x + CARD_W - MARKER_INSET - MARKER
     top, bottom = y + CARD_H - MARKER_INSET, y + MARKER_INSET + MARKER
+    if corners:
+        # Corner layout: marks 1-4 placed by the card's order, read counterclockwise
+        # from the top left, all facing the card's top.
+        for (mx, my), n in zip([(left, top), (left, bottom), (right, bottom), (right, top)], corners):
+            marker(c, mx, my, MARKER, MARKERS[CORNER_MARKS[int(n) - 1]])
+        return
+    # Single-code layout: the card's code top-left and bottom-right (turned, so the back
+    # reads the same either way up); the decoy in the other two corners.
     marker(c, left, top, MARKER, MARKERS[code])
     marker(c, right, bottom, MARKER, MARKERS[code], upside_down=True)
     marker(c, right, top, MARKER, MARKERS[DECOY])
@@ -125,26 +133,28 @@ def lines(c, x, y, items, size=10.5, gap=5.6 * mm, numbered=False, width=170 * m
     return y
 
 
-def page_one(c, pages):
+def page_one(c, pages, corner_layout=False):
     W, H = A4
-    heading(c, 'Card back test sheet', 'Cluedo Robot Players: 21 card backs with corner markers, and a marker size test.', H - 24 * mm)
+    if corner_layout:
+        heading(c, 'Card back test sheet: corner marks', 'Cluedo Robot Players: 21 card backs, each with the same four corner marks in its own order.', H - 24 * mm)
+    else:
+        heading(c, 'Card back test sheet', 'Cluedo Robot Players: 21 card backs with corner markers, and a marker size test.', H - 24 * mm)
     c.setFillColor(INK)
     c.setFont('Helvetica-Bold', 12)
     c.drawString(18 * mm, H - 46 * mm, 'Printing')
     c.setFillColor(INK)
     y = lines(c, 18 * mm, H - 54 * mm, [
-        'Print pages 2 to 5 at actual size: 100%, with "fit to page" turned off.',
+        ('Print pages 2 to 4' if corner_layout else 'Print pages 2 to 5') + ' at actual size: 100%, with "fit to page" turned off.',
         'Check the bar at the bottom of this page measures exactly 100 mm. If it doesn’t, the cards are the wrong size.',
         'Laminate the sheets. Cut out the cards on pages 2 to 4 along their edges.',
-        'Write each card’s name, printed under it, on its blank front. Keep page 5 in one piece.',
+        'Write each card’s name, printed under it, on its blank front.' + ('' if corner_layout else ' Keep page 5 in one piece.'),
     ], numbered=True)
     c.setFont('Helvetica-Bold', 12)
     c.drawString(18 * mm, y - 6 * mm, 'Taking the test photo')
     y = lines(c, 18 * mm, y - 14 * mm, [
         'Lay the cards face-down in rows: one row per player, and one for the envelope. Leave a finger’s width between cards and a wider gap between rows.',
         'Hold the phone about 40 cm above the cards, tilted a little away from straight down so the ceiling light’s reflection misses them. No flash.',
-        'Photograph page 5 as well. The app will say which marker sizes and shades it could read.',
-    ], numbered=True)
+    ] + ([] if corner_layout else ['Photograph page 5 as well. The app will say which marker sizes and shades it could read.']), numbered=True)
     c.setFont('Helvetica-Bold', 12)
     c.drawString(18 * mm, y - 6 * mm, 'Where each card is')
     y -= 14 * mm
@@ -159,7 +169,8 @@ def page_one(c, pages):
         y -= max(1, len(rows)) * 5 * mm + 3 * mm
     c.setFillColor(MUTED)
     lines(c, 18 * mm, y - 4 * mm, [
-        'Each card carries its code in two corners, 8 mm across: top left, and bottom right turned upside down. The other two corners hold a decoy that is the same on every card.',
+        ('Every card carries the same four 8 mm marks, standing for 1 to 4, one in each corner. Which corner holds which number tells the cards apart. The marks all face the card’s top, so the reader knows where to start.'
+         if corner_layout else 'Each card carries its code in two corners, 8 mm across: top left, and bottom right turned upside down. The other two corners hold a decoy that is the same on every card.'),
     ], size=9.5)
 
     # The 100 mm check.
@@ -178,7 +189,7 @@ def page_one(c, pages):
     c.drawString(x0 + 104 * mm, yb - 1, 'This bar should measure 100 mm.')
 
 
-def card_pages(c, names):
+def card_pages(c, names, corner_layout=False):
     W, H = A4
     gap_x, gap_y = 3 * mm, 6 * mm
     left = (W - (3 * CARD_W + 2 * gap_x)) / 2
@@ -187,7 +198,7 @@ def card_pages(c, names):
         r, col = divmod(i, 3)
         x = left + col * (CARD_W + gap_x)
         y = top - (r + 1) * CARD_H - r * gap_y
-        card_back(c, x, y, CARD_MARKERS[name])
+        card_back(c, x, y, CARD_MARKERS[name], CARD_CORNERS[name] if corner_layout else None)
         c.setFillColor(MUTED)
         c.setFont('Helvetica', 7)
         c.drawCentredString(x + CARD_W / 2, y - 3.8 * mm, name)
@@ -222,22 +233,23 @@ def size_page(c):
             code += 1
 
 
-def main():
+def build(out, corner_layout):
     order = list(CARD_MARKERS)
     pages = [(n + 2, order[i:i + 9]) for n, i in enumerate(range(0, len(order), 9))]
-    out = ROOT / 'print' / 'card-back-test-sheet.pdf'
     c = canvas.Canvas(str(out), pagesize=A4)
-    c.setTitle('Card back test sheet')
+    c.setTitle('Card back test sheet' + (': corner marks' if corner_layout else ''))
     c.setAuthor('Cluedo Robot Players')
-    page_one(c, pages)
+    page_one(c, pages, corner_layout)
     c.showPage()
     for _, names in pages:
-        card_pages(c, names)
+        card_pages(c, names, corner_layout)
         c.showPage()
-    size_page(c)
-    c.showPage()
+    if not corner_layout:
+        size_page(c)
+        c.showPage()
     c.save()
     print('wrote', out)
 
 
-main()
+build(ROOT / 'print' / 'card-back-test-sheet.pdf', False)
+build(ROOT / 'print' / 'card-back-test-sheet-corners.pdf', True)

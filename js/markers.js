@@ -35,7 +35,11 @@ export const MARKERS = [
 "010001000101111011100001001001001010",
 "010111110110011110000010111110101110",
 "100001011001110000101111000101010000",
-"110101110101101000100100011111111011"
+"110101110101101000100100011111111011",
+"100111101010111110101001100000010101",
+"000101001111010001010001110001100000",
+"010100101001101001101001110110101101",
+"101010001101111000110000110011110000"
 ];
 
 // Marker 0 is the decoy printed in two corners of every card.
@@ -65,4 +69,37 @@ export const CARD_MARKERS = {
   "Kitchen": 19,
   "Living Room": 20,
   "Office": 21
+};
+
+// The corner-mark layout: every card carries the same four marks, standing for 1 to 4,
+// one in each corner, and the card is told apart by which corner holds which. These
+// are the markers for marks 1, 2, 3 and 4.
+export const CORNER_MARKS = [34, 35, 36, 37];
+
+// Each card's corners, read from the top-left corner going counterclockwise (top left,
+// bottom left, bottom right, top right). "2413" puts mark 2 top left, 4 bottom left,
+// 1 bottom right and 3 top right. The marks all face the card's top, which is how the
+// reader knows where to start.
+export const CARD_CORNERS = {
+  "Scarlet": "1234",
+  "Mustard": "1243",
+  "White": "1324",
+  "Green": "1342",
+  "Peacock": "1423",
+  "Plum": "1432",
+  "Candlestick": "2134",
+  "Dagger": "2143",
+  "Lead Pipe": "2314",
+  "Pistol": "2341",
+  "Rope": "2413",
+  "Wrench": "2431",
+  "Bathroom": "3124",
+  "Bedroom": "3142",
+  "Courtyard": "3214",
+  "Dining Room": "3241",
+  "Game Room": "3412",
+  "Garage": "3421",
+  "Kitchen": "4123",
+  "Living Room": "4132",
+  "Office": "4213"
 };
