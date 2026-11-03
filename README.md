@@ -2,7 +2,7 @@
 
 Robot players for a real game of Cluedo (or Clue). The robots are dealt cards and answer suggestions, so two people can play like a full table. They don't move or ask questions.
 
-Open the page on a phone, list the players in seating order, and start.
+Play it at **https://jordykaufman.github.io/cloodobots/**. Open the page on a phone, list the players in seating order, and start.
 
 ## What it does
 
