@@ -3,7 +3,7 @@ marker sizes and shades, for a print-and-laminate test of reading cards from one
 
 Run from the project folder: python3 tools/test_sheet.py
 """
-import json, re, pathlib
+import json, math, re, pathlib
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.colors import HexColor
@@ -75,17 +75,35 @@ def card_back(c, x, y, code, corners=None):
     c.roundRect(x + 3.75 * mm, y + 3.75 * mm, CARD_W - 7.5 * mm, CARD_H - 7.5 * mm, 1.25 * mm, stroke=1, fill=0)
     c.setStrokeAlpha(1)
 
-    # The medallion and its magnifying glass.
     cx, cy = x + CARD_W / 2, y + CARD_H / 2
     c.setFillColor(NAVY)
     c.setLineWidth(0.5 * mm)
     c.circle(cx, cy, 16 * mm, stroke=1, fill=1)
-    k = 16 * mm / 24
-    c.setLineWidth(1.3 * k)
-    c.setLineCap(1)
-    c.circle(cx + (10 - 12) * k, cy - (10 - 12) * k, 6 * k, stroke=1, fill=0)
-    c.line(cx + 2.5 * k, cy - 2.5 * k, cx + 8.5 * k, cy - 8.5 * k)
-    c.setLineCap(0)
+    if corners:
+        # A compass rose, which looks the same whichever way up the card lies, so the
+        # back gives no hint of where the corner order starts.
+        pts = []
+        for i in range(16):
+            a = math.pi / 2 + i * math.pi / 8
+            r = (10.5 if i % 4 == 0 else 6.5 if i % 2 == 0 else 2.2) * mm
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+        path = c.beginPath()
+        path.moveTo(*pts[0])
+        for q in pts[1:]:
+            path.lineTo(*q)
+        path.close()
+        c.setLineWidth(0.4 * mm)
+        c.setLineJoin(1)
+        c.drawPath(path, stroke=1, fill=0)
+        c.circle(cx, cy, 1.1 * mm, stroke=1, fill=0)
+    else:
+        # The magnifying glass.
+        k = 16 * mm / 24
+        c.setLineWidth(1.3 * k)
+        c.setLineCap(1)
+        c.circle(cx + (10 - 12) * k, cy - (10 - 12) * k, 6 * k, stroke=1, fill=0)
+        c.line(cx + 2.5 * k, cy - 2.5 * k, cx + 8.5 * k, cy - 8.5 * k)
+        c.setLineCap(0)
 
     left, right = x + MARKER_INSET, x + CARD_W - MARKER_INSET - MARKER
     top, bottom = y + CARD_H - MARKER_INSET, y + MARKER_INSET + MARKER
