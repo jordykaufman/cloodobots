@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Card back reader test · Cluedo Robot Players</title>
+<meta name="theme-color" content="#151C29">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Figtree:wght@400..800&family=Special+Elite&display=swap">
+<link rel="stylesheet" href="app.css">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+[hidden] { display: none !important; }
+.pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pick label { cursor: pointer; }
+.summary { font: 700 clamp(1.3rem, 5vw, 1.6rem)/1.2 var(--font-display); }
+.rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.rows li { display: grid; gap: 6px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.rows .label { margin: 0; }
+.missing { color: var(--bad); font-weight: 650; }
+.shot { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); }
+.sizes { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.sizes th, .sizes td { padding: 8px 6px; text-align: center; border-bottom: 1px solid var(--line); }
+.sizes th { font-size: .8rem; color: var(--muted); font-weight: 650; }
+.sizes .yes { color: var(--good); font-weight: 700; }
+.sizes .no { color: var(--muted); }
+.key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem; color: var(--muted); }
+.key span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--k); }
+</style>
+</head>
+<body>
+<main id="app">
+  <header class="masthead">
+    <p class="brand"><span>Cluedo Robot Players</span></p>
+    <h1 class="h1">Card back reader test</h1>
+    <p class="lede">Lay the test cards face-down in rows, one row per player, and take one photo from about 40 cm up. Or photograph page 5 of the test sheet to see which marker sizes and shades read.</p>
+  </header>
+  <section class="panel">
+    <div class="pick">
+      <label class="btn btn--primary btn--big" for="camera">Take a photo</label>
+      <label class="btn btn--ghost btn--big" for="library">Choose a photo</label>
+    </div>
+    <input type="file" id="camera" accept="image/*" capture="environment" hidden>
+    <input type="file" id="library" accept="image/*" hidden>
+    <p class="hint" id="status" role="status">Tip: tilt the phone a little away from straight down so the light’s reflection misses the cards. No flash.</p>
+  </section>
+  <section class="panel" id="results" hidden>
+    <p class="summary" id="summary"></p>
+    <p class="missing" id="missing" hidden></p>
+    <div id="rowsBox" hidden>
+      <h2 class="h2">Rows, from the top of the photo</h2>
+      <ol class="rows" id="rows"></ol>
+    </div>
+    <div id="sizesBox" hidden>
+      <h2 class="h2">Marker size test</h2>
+      <table class="sizes" id="sizes"></table>
+    </div>
+    <h2 class="h2">What the reader saw</h2>
+    <p class="key"><span style="--k:#2D9C5B">card code</span><span style="--k:#9AA4B2">decoy</span><span style="--k:#3A7BD5">size test</span></p>
+    <canvas class="shot" id="shot" aria-label="Your photo with each marker the reader found outlined"></canvas>
+  </section>
+</main>
+<script type="module" src="js/card-test.js"></script>
+</body>
+</html>

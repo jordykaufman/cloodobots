@@ -30,6 +30,9 @@ A static site with no build step. Plain ES modules, plus three libraries loaded 
 | `js/net.js` | The PeerJS link. |
 | `js/scan.js`, `js/vision.js`, `js/match.js` | Camera, finding and straightening the card, reading and matching its name. The scanner reads only small boxes near the bottom of the card where the name is printed, because the picture beside the name confuses the text reader. |
 | `cards/clue2013/` | Photos of the 2013 Clue cards, 420 pixels wide. |
+| `js/backs.js`, `js/markers.js` | Reads the markers on printed card backs from one photo of cards laid face-down, and groups the cards into rows. |
+| `card-test.html` | Try the card back reader with a photo of the printed test sheet. |
+| `tools/` | `make_markers.py` makes the marker codes; `test_sheet.py` draws `print/card-back-test-sheet.pdf`. |
 
 The camera needs HTTPS (or `localhost`), so serve the folder from somewhere like GitHub Pages.
 
@@ -40,6 +43,10 @@ npm test
 ```
 
 Runs the rule and name-matching tests with Node's built-in test runner. No install needed.
+
+## Card backs you print yourself
+
+`print/card-back-test-sheet.pdf` has 21 card backs with an 8 mm marker in each corner: two carry the card's code and two are a decoy shared by every card. Lay the cards face-down in rows, one row per player plus one for the envelope, and one photo tells the app who holds what. On simulated photos of the sheet, with tilt, rotated cards, blur and glare, the reader placed every card correctly in all 28 photos where the markers were at least 34 pixels across, and never misread a card.
 
 ## Known limits
 
