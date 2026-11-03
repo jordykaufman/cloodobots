@@ -121,6 +121,34 @@ def card_back(c, x, y, code, corners=None):
     marker(c, left, bottom, MARKER, MARKERS[DECOY], upside_down=True)
 
 
+CATEGORY = [('Suspect', HexColor('#8B1C2D'))] * 6 + [('Weapon', HexColor('#2C5888'))] * 6 + [('Room', HexColor('#4B6A2C'))] * 9
+
+
+def card_front(c, x, y, name, index):
+    """A plain front: the card's type at both ends and its name in the middle."""
+    kind, colour = CATEGORY[index]
+    c.setStrokeColor(HexColor('#B8C0CC'))
+    c.setLineWidth(0.3)
+    c.roundRect(x, y, CARD_W, CARD_H, RADIUS, stroke=1, fill=0)
+    c.setStrokeColor(colour)
+    c.setLineWidth(0.6 * mm)
+    c.roundRect(x + 3 * mm, y + 3 * mm, CARD_W - 6 * mm, CARD_H - 6 * mm, 2 * mm, stroke=1, fill=0)
+    c.setFillColor(colour)
+    c.setFont('Helvetica-Bold', 8)
+    c.drawCentredString(x + CARD_W / 2, y + CARD_H - 10 * mm, kind.upper())
+    c.saveState()
+    c.translate(x + CARD_W / 2, y + 10 * mm)
+    c.rotate(180)
+    c.drawCentredString(0, -2.8, kind.upper())
+    c.restoreState()
+    c.setFillColor(INK)
+    size = 17
+    while c.stringWidth(name, 'Helvetica-Bold', size) > CARD_W - 14 * mm:
+        size -= 1
+    c.setFont('Helvetica-Bold', size)
+    c.drawCentredString(x + CARD_W / 2, y + CARD_H / 2 - size * 0.35, name)
+
+
 def heading(c, text, sub, top):
     c.setFillColor(INK)
     c.setFont('Helvetica-Bold', 20)
@@ -207,13 +235,23 @@ def page_one(c, pages, corner_layout=False):
     c.drawString(x0 + 104 * mm, yb - 1, 'This bar should measure 100 mm.')
 
 
-def card_pages(c, names, corner_layout=False):
+def card_pages(c, names, corner_layout=False, fronts=False):
+    """A page of card backs, or with `fronts` the page to print on its other side:
+    the same cards with columns swapped, because turning the sheet over on its long
+    edge swaps left and right."""
     W, H = A4
     gap_x, gap_y = 3 * mm, 6 * mm
     left = (W - (3 * CARD_W + 2 * gap_x)) / 2
     top = H - (H - (3 * CARD_H + 2 * gap_y)) / 2
+    order = list(CARD_MARKERS)
     for i, name in enumerate(names):
         r, col = divmod(i, 3)
+        if fronts:
+            col = 2 - col
+            x = left + col * (CARD_W + gap_x)
+            y = top - (r + 1) * CARD_H - r * gap_y
+            card_front(c, x, y, name, order.index(name))
+            continue
         x = left + col * (CARD_W + gap_x)
         y = top - (r + 1) * CARD_H - r * gap_y
         card_back(c, x, y, CARD_MARKERS[name], CARD_CORNERS[name] if corner_layout else None)
@@ -269,5 +307,22 @@ def build(out, corner_layout):
     print('wrote', out)
 
 
+def build_double_sided(out):
+    """Just the card pages, each followed by its fronts, for printing double-sided."""
+    order = list(CARD_MARKERS)
+    c = canvas.Canvas(str(out), pagesize=A4)
+    c.setTitle('Card back test sheet: corner marks, double-sided')
+    c.setAuthor('Cluedo Robot Players')
+    for i in range(0, len(order), 9):
+        names = order[i:i + 9]
+        card_pages(c, names, True)
+        c.showPage()
+        card_pages(c, names, True, fronts=True)
+        c.showPage()
+    c.save()
+    print('wrote', out)
+
+
 build(ROOT / 'print' / 'card-back-test-sheet.pdf', False)
 build(ROOT / 'print' / 'card-back-test-sheet-corners.pdf', True)
+build_double_sided(ROOT / 'print' / 'card-back-test-sheet-corners-double-sided.pdf')
