@@ -57,25 +57,35 @@ def lattice(c, x, y, w, h):
     c.setStrokeAlpha(1)
 
 
-def card_back(c, x, y, code, corners=None):
-    path = c.beginPath()
-    path.roundRect(x, y, CARD_W, CARD_H, RADIUS)
-    c.saveState()
-    c.clipPath(path, stroke=0, fill=0)
-    c.setFillColor(NAVY)
-    c.rect(x, y, CARD_W, CARD_H, stroke=0, fill=1)
-    lattice(c, x, y, CARD_W, CARD_H)
-    c.restoreState()
+def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0):
+    """A card back with its bottom-left corner at (x, y). A print service's cards can
+    be a little bigger than ours (w, h) and need the background to run past the cut
+    line (bleed); the marks then stay where the reader expects them, measured from
+    the card's centre."""
+    if bleed:
+        c.setFillColor(NAVY)
+        c.rect(x - bleed, y - bleed, w + 2 * bleed, h + 2 * bleed, stroke=0, fill=1)
+        lattice(c, x - bleed, y - bleed, w + 2 * bleed, h + 2 * bleed)
+    else:
+        path = c.beginPath()
+        path.roundRect(x, y, w, h, RADIUS)
+        c.saveState()
+        c.clipPath(path, stroke=0, fill=0)
+        c.setFillColor(NAVY)
+        c.rect(x, y, w, h, stroke=0, fill=1)
+        lattice(c, x, y, w, h)
+        c.restoreState()
 
     c.setStrokeColor(BRASS)
     c.setLineWidth(0.4 * mm)
-    c.roundRect(x + 2.5 * mm, y + 2.5 * mm, CARD_W - 5 * mm, CARD_H - 5 * mm, 2 * mm, stroke=1, fill=0)
+    c.roundRect(x + 2.5 * mm, y + 2.5 * mm, w - 5 * mm, h - 5 * mm, 2 * mm, stroke=1, fill=0)
     c.setStrokeAlpha(0.45)
     c.setLineWidth(0.25 * mm)
-    c.roundRect(x + 3.75 * mm, y + 3.75 * mm, CARD_W - 7.5 * mm, CARD_H - 7.5 * mm, 1.25 * mm, stroke=1, fill=0)
+    c.roundRect(x + 3.75 * mm, y + 3.75 * mm, w - 7.5 * mm, h - 7.5 * mm, 1.25 * mm, stroke=1, fill=0)
     c.setStrokeAlpha(1)
 
-    cx, cy = x + CARD_W / 2, y + CARD_H / 2
+    cx, cy = x + w / 2, y + h / 2
+    x, y = cx - CARD_W / 2, cy - CARD_H / 2
     c.setFillColor(NAVY)
     c.setLineWidth(0.5 * mm)
     c.circle(cx, cy, 16 * mm, stroke=1, fill=1)
@@ -323,6 +333,7 @@ def build_double_sided(out):
     print('wrote', out)
 
 
-build(ROOT / 'print' / 'card-back-test-sheet.pdf', False)
-build(ROOT / 'print' / 'card-back-test-sheet-corners.pdf', True)
-build_double_sided(ROOT / 'print' / 'card-back-test-sheet-corners-double-sided.pdf')
+if __name__ == '__main__':
+    build(ROOT / 'print' / 'card-back-test-sheet.pdf', False)
+    build(ROOT / 'print' / 'card-back-test-sheet-corners.pdf', True)
+    build_double_sided(ROOT / 'print' / 'card-back-test-sheet-corners-double-sided.pdf')

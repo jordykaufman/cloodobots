@@ -32,7 +32,7 @@ A static site with no build step. Plain ES modules, plus three libraries loaded 
 | `cards/clue2013/` | Photos of the 2013 Clue cards, 420 pixels wide. |
 | `js/backs.js`, `js/markers.js` | Reads the markers on printed card backs from one photo of cards laid face-down, and groups the cards into rows. |
 | `card-test.html` | Try the card back reader with a photo of the printed test sheet. |
-| `tools/` | `make_markers.py` makes the marker codes; `test_sheet.py` draws `print/card-back-test-sheet.pdf`. |
+| `tools/` | `make_markers.py` makes the marker codes; `test_sheet.py` draws `print/card-back-test-sheet.pdf`; `print_cards.py` makes print files for a deck from MakePlayingCards. |
 
 The camera needs HTTPS (or `localhost`), so serve the folder from somewhere like GitHub Pages.
 
@@ -47,6 +47,8 @@ Runs the rule and name-matching tests with Node's built-in test runner. No insta
 ## Card backs you print yourself
 
 `print/card-back-test-sheet.pdf` has 21 card backs with an 8 mm marker in each corner: two carry the card's code and two are a decoy shared by every card. Lay the cards face-down in rows, one row per player plus one for the envelope, and one photo tells the app who holds what. On simulated photos of the sheet, with tilt, rotated cards, blur and glare, the reader placed every card correctly in all 28 photos where the markers were at least 34 pixels across, and never misread a card.
+
+To order a proper deck, `python3 tools/print_cards.py OUT_DIR [FRONTS_DIR ...]` makes one image per card back, and per front if you give it a folder of fronts named after the cards (`scarlet.png`, `lead_pipe.jpg`). They follow MakePlayingCards' poker-size template: 2.5 × 3.5 in with 0.12 in of bleed on every side, at 600 dpi (1644 × 2244 pixels). The marks stay the same distance from the card's centre as on the test sheet, so the reader needs no change. `OUT_DIR/proof.png` shows every card with the cut line and safe area drawn on. The fronts aren't in this repository.
 
 ## Known limits
 
