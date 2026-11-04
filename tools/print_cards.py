@@ -1,6 +1,8 @@
-"""Makes print files for a deck from MakePlayingCards: poker size (2.5 x 3.5 in), one
-image per card front and per card back, at 600 dpi with 0.12 in of bleed past the cut
-line on every side (their template: 822 x 1122 px at 300 dpi, so 1644 x 2244 here).
+"""Makes print files for a deck from MakePlayingCards in their US game size (2.2 x 3.43
+in, the size of real Clue cards): one image per card front and per card back, at 600
+dpi with 0.12 in of bleed past the cut line on every side, and anything important kept
+inside their safe area, 0.1 in inside the cut (their template: 732 x 1101 px at 300
+dpi, so 1464 x 2202 here).
 
     python3 tools/print_cards.py OUT_DIR [FRONTS_DIR ...]
 
@@ -14,14 +16,14 @@ from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_sheet import CARD_MARKERS, CARD_CORNERS, card_back  # noqa: E402
+from test_sheet import CARD_MARKERS, CARD_CORNERS, US_GAME, card_back  # noqa: E402
 
 DPI = 600
-TRIM_W, TRIM_H = 2.5 * inch, 3.5 * inch
-BLEED = 0.12 * inch
-PX_BLEED = round(BLEED / inch * DPI)                     # 72
-PX_W, PX_H = round(2.5 * DPI), round(3.5 * DPI)           # 1500 x 2100, the card itself
-FULL = (PX_W + 2 * PX_BLEED, PX_H + 2 * PX_BLEED)         # 1644 x 2244, with the bleed
+TRIM_W, TRIM_H = US_GAME['w'], US_GAME['h']
+BLEED, SAFE = 0.12 * inch, 0.1 * inch
+PX_BLEED, PX_SAFE = round(BLEED / inch * DPI), round(SAFE / inch * DPI)   # 72, 60
+PX_W, PX_H = round(TRIM_W / inch * DPI), round(TRIM_H / inch * DPI)       # 1320 x 2058, the card itself
+FULL = (PX_W + 2 * PX_BLEED, PX_H + 2 * PX_BLEED)                       # 1464 x 2202, with the bleed
 # The fronts were trimmed close for the screen; this much border is added back on
 # every side (as a share of the card's size) so nothing important is near the cut.
 MARGIN = 0.04
@@ -38,7 +40,8 @@ def backs(out):
         pdf = pathlib.Path(tmp) / 'backs.pdf'
         c = canvas.Canvas(str(pdf), pagesize=(TRIM_W + 2 * BLEED, TRIM_H + 2 * BLEED))
         for name in names:
-            card_back(c, BLEED, BLEED, CARD_MARKERS[name], CARD_CORNERS[name], w=TRIM_W, h=TRIM_H, bleed=BLEED)
+            card_back(c, BLEED, BLEED, CARD_MARKERS[name], CARD_CORNERS[name], w=TRIM_W, h=TRIM_H, bleed=BLEED,
+                      inset=US_GAME['inset'], frame=US_GAME['frame'])
             c.showPage()
         c.save()
         subprocess.run(['pdftoppm', '-r', str(DPI), '-png', str(pdf), str(pathlib.Path(tmp) / 'b')], check=True)
@@ -52,12 +55,18 @@ def backs(out):
 
 def plain_colour(band, line):
     """The colour of a plain border along one edge, or None if the edge isn't plain.
-    `line` is the outermost row or column and decides whether it's plain; the colour
+    `line` is the outermost row or column and decides whether it's plain. The colour
     comes from `band`, a strip a few pixels deep, because the outermost pixels are
-    often a shade off."""
+    often a shade off, but only from its pixels close to the edge's colour, so a line
+    of the design running near the edge doesn't tint it."""
     if max(ImageStat.Stat(line).stddev) >= 14:
         return None
-    return tuple(round(v) for v in ImageStat.Stat(band).median)
+    edge = ImageStat.Stat(line).median
+    px = [q for q in (band.get_flattened_data() if hasattr(band, 'get_flattened_data') else band.getdata())
+          if sum(abs(a - b) for a, b in zip(q, edge)) < 40]
+    if len(px) < 10:
+        return tuple(round(v) for v in edge)
+    return tuple(sorted(q[i] for q in px)[len(px) // 2] for i in range(3))
 
 
 def extend(card, mx, my, depth=16, soften=0):
@@ -119,7 +128,7 @@ def fronts(out, dirs):
             continue
         card = Image.open(found[0])
         ratio = card.width / card.height
-        if abs(ratio / (2.5 / 3.5) - 1) > 0.02:
+        if abs(ratio / (PX_W / PX_H) - 1) > 0.02:
             print(f'warning: {found[0].name} is {card.width} x {card.height}, not card-shaped; it will be squashed to fit')
         with_bleed(card).save(out / f'{stem(i, name)}.jpg', quality=95, subsampling=0, dpi=(DPI, DPI))
     return missing
@@ -149,7 +158,7 @@ def proof(out):
                 sheet.paste(Image.open(p).resize((tw, th), Image.LANCZOS), (x, y))
                 cut = [x + PX_BLEED * k, y + PX_BLEED * k, x + (FULL[0] - PX_BLEED) * k, y + (FULL[1] - PX_BLEED) * k]
                 d.rounded_rectangle(cut, radius=round(0.125 * DPI * k), outline=(230, 40, 60), width=1)
-                s = 2 * PX_BLEED * k
+                s = (PX_BLEED + PX_SAFE) * k
                 for yy in range(int(y + s), int(y + th - s), 6):
                     d.line([x + s, yy, x + s, yy + 3], fill=(40, 200, 255)); d.line([x + tw - s, yy, x + tw - s, yy + 3], fill=(40, 200, 255))
                 for xx in range(int(x + s), int(x + tw - s), 6):

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findMarkers, readLayout, CARD } from '../js/backs.js';
-import { MARKERS, DECOY, CARD_MARKERS } from '../js/markers.js';
+import { findMarkers, readLayout, CARD, CORNER_SIZES } from '../js/backs.js';
+import { MARKERS, DECOY, CARD_MARKERS, CORNER_MARKS, CARD_CORNERS } from '../js/markers.js';
 
 // Paints card backs into a grayscale image: a dark card with its code top left and,
 // turned round, bottom right, and the decoy in the other corners. Each card can be
@@ -59,3 +59,48 @@ test('plain noise is never read as a card', () => {
   for (let i = 0; i < gray.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; gray[i] = (s >> 8) & 255; }
   assert.equal(findMarkers({ gray, w, h }).length, 0);
 });
+
+// Paints corner-layout card backs: marks 1-4 placed by each card's order, read
+// counterclockwise from the top left, all facing the card's top.
+function paintCorners(cards, size, w, h, pxPerMm) {
+  const gray = new Uint8ClampedArray(w * h).fill(170);
+  const M = CARD.marker, i = size.inset;
+  const spots = [[i, i], [i, size.h - i - M], [size.w - i - M, size.h - i - M], [size.w - i - M, i]];
+  for (const { name, cx, cy, angle } of cards) {
+    const a = angle * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+    const marks = spots.map(([mx, my], k) => [mx, my, MARKERS[CORNER_MARKS[+CARD_CORNERS[name][k] - 1]]]);
+    const half = Math.hypot(size.w, size.h) / 2 * pxPerMm;
+    for (let y = Math.max(0, Math.floor(cy - half)); y < Math.min(h, cy + half); y++) {
+      for (let x = Math.max(0, Math.floor(cx - half)); x < Math.min(w, cx + half); x++) {
+        const dx = (x - cx) / pxPerMm, dy = (y - cy) / pxPerMm;
+        const u = dx * cos + dy * sin + size.w / 2, v = -dx * sin + dy * cos + size.h / 2;
+        if (u < 0 || v < 0 || u > size.w || v > size.h) continue;
+        let value = 28;
+        for (const [mx, my, bits] of marks) {
+          const c = Math.floor(u - mx), r = Math.floor(v - my);
+          if (c < 0 || r < 0 || c > 7 || r > 7) continue;
+          if (r === 0 || r === 7 || c === 0 || c === 7 || bits[(r - 1) * 6 + c - 1] === '1') value = 200;
+        }
+        gray[y * w + x] = value;
+      }
+    }
+  }
+  return { gray, w, h };
+}
+
+for (const size of CORNER_SIZES) {
+  test(`reads every card of the corner layout on ${size.name} cards, in rows`, () => {
+    const P = 5.5, names = Object.keys(CARD_MARKERS), gap = 4;
+    const layout = [names.slice(0, 5), names.slice(5, 9), names.slice(9, 14), names.slice(14, 18), names.slice(18)];
+    const cards = [];
+    layout.forEach((row, r) => row.forEach((name, c) => cards.push({
+      name, cx: (20 + c * (size.w + gap) + size.w / 2) * P, cy: (20 + r * (size.h + 12) + size.h / 2) * P,
+      angle: (r * 7 + c * 13) % 9 - 4 + ((r + c) % 3 === 0 ? 180 : 0),
+    })));
+    const img = paintCorners(cards, size, Math.round((40 + 5 * size.w + 4 * gap) * P), Math.round((40 + 5 * size.h + 48) * P), P);
+    const res = readLayout(img);
+    const nameOf = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
+    assert.deepEqual(res.rows.map(row => row.map(c => nameOf[c.id])), layout);
+    assert.deepEqual(res.doubles, []);
+  });
+}

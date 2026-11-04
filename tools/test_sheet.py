@@ -5,7 +5,7 @@ Run from the project folder: python3 tools/test_sheet.py
 """
 import json, math, re, pathlib
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
+from reportlab.lib.units import mm, inch
 from reportlab.lib.colors import HexColor
 from reportlab.pdfgen import canvas
 
@@ -24,6 +24,14 @@ MUTED = HexColor('#566173')
 CARD_W, CARD_H, RADIUS = 63 * mm, 88 * mm, 3 * mm
 MARKER = 8 * mm          # the marker's ring and squares; one more square of clear space surrounds it
 MARKER_INSET = 5.5 * mm  # from the card's edge to the marker
+FRAME = (2.5 * mm, 3.75 * mm)  # the two brass frame lines, in from the card's edge
+
+# The deck from MakePlayingCards in their US game size, the size of real Clue cards.
+# It's narrower, so the marks sit a little closer to the edge, and the frame moves in
+# to stay inside their safe area (0.1 in inside the cut). js/backs.js must agree on
+# the size and the marks' inset.
+US_GAME = {'w': 2.2 * inch, 'h': 3.43 * inch, 'inset': 5.25 * mm, 'frame': (2.9 * mm, 4.0 * mm)}
+TEST_SHEET = {'w': CARD_W, 'h': CARD_H, 'inset': MARKER_INSET, 'frame': FRAME}
 
 
 def marker(c, x, y, size, bits, strength=1.0, upside_down=False):
@@ -57,11 +65,10 @@ def lattice(c, x, y, w, h):
     c.setStrokeAlpha(1)
 
 
-def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0):
-    """A card back with its bottom-left corner at (x, y). A print service's cards can
-    be a little bigger than ours (w, h) and need the background to run past the cut
-    line (bleed); the marks then stay where the reader expects them, measured from
-    the card's centre."""
+def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0, inset=MARKER_INSET, frame=FRAME):
+    """A card back w by h with its bottom-left corner at (x, y): the marks `inset` in
+    from the edges and the frame lines at the distances in `frame`. With `bleed`, the
+    background runs that far past the cut line, as print services need."""
     if bleed:
         c.setFillColor(NAVY)
         c.rect(x - bleed, y - bleed, w + 2 * bleed, h + 2 * bleed, stroke=0, fill=1)
@@ -78,14 +85,15 @@ def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0):
 
     c.setStrokeColor(BRASS)
     c.setLineWidth(0.4 * mm)
-    c.roundRect(x + 2.5 * mm, y + 2.5 * mm, w - 5 * mm, h - 5 * mm, 2 * mm, stroke=1, fill=0)
+    f = frame[0]
+    c.roundRect(x + f, y + f, w - 2 * f, h - 2 * f, 2 * mm, stroke=1, fill=0)
     c.setStrokeAlpha(0.45)
     c.setLineWidth(0.25 * mm)
-    c.roundRect(x + 3.75 * mm, y + 3.75 * mm, w - 7.5 * mm, h - 7.5 * mm, 1.25 * mm, stroke=1, fill=0)
+    f = frame[1]
+    c.roundRect(x + f, y + f, w - 2 * f, h - 2 * f, 1.25 * mm, stroke=1, fill=0)
     c.setStrokeAlpha(1)
 
     cx, cy = x + w / 2, y + h / 2
-    x, y = cx - CARD_W / 2, cy - CARD_H / 2
     c.setFillColor(NAVY)
     c.setLineWidth(0.5 * mm)
     c.circle(cx, cy, 16 * mm, stroke=1, fill=1)
@@ -115,8 +123,8 @@ def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0):
         c.line(cx + 2.5 * k, cy - 2.5 * k, cx + 8.5 * k, cy - 8.5 * k)
         c.setLineCap(0)
 
-    left, right = x + MARKER_INSET, x + CARD_W - MARKER_INSET - MARKER
-    top, bottom = y + CARD_H - MARKER_INSET, y + MARKER_INSET + MARKER
+    left, right = x + inset, x + w - inset - MARKER
+    top, bottom = y + h - inset, y + inset + MARKER
     if corners:
         # Corner layout: marks 1-4 placed by the card's order, read counterclockwise
         # from the top left, all facing the card's top.
@@ -134,29 +142,29 @@ def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0):
 CATEGORY = [('Suspect', HexColor('#8B1C2D'))] * 6 + [('Weapon', HexColor('#2C5888'))] * 6 + [('Room', HexColor('#4B6A2C'))] * 9
 
 
-def card_front(c, x, y, name, index):
+def card_front(c, x, y, name, index, w=CARD_W, h=CARD_H):
     """A plain front: the card's type at both ends and its name in the middle."""
     kind, colour = CATEGORY[index]
     c.setStrokeColor(HexColor('#B8C0CC'))
     c.setLineWidth(0.3)
-    c.roundRect(x, y, CARD_W, CARD_H, RADIUS, stroke=1, fill=0)
+    c.roundRect(x, y, w, h, RADIUS, stroke=1, fill=0)
     c.setStrokeColor(colour)
     c.setLineWidth(0.6 * mm)
-    c.roundRect(x + 3 * mm, y + 3 * mm, CARD_W - 6 * mm, CARD_H - 6 * mm, 2 * mm, stroke=1, fill=0)
+    c.roundRect(x + 3 * mm, y + 3 * mm, w - 6 * mm, h - 6 * mm, 2 * mm, stroke=1, fill=0)
     c.setFillColor(colour)
     c.setFont('Helvetica-Bold', 8)
-    c.drawCentredString(x + CARD_W / 2, y + CARD_H - 10 * mm, kind.upper())
+    c.drawCentredString(x + w / 2, y + h - 10 * mm, kind.upper())
     c.saveState()
-    c.translate(x + CARD_W / 2, y + 10 * mm)
+    c.translate(x + w / 2, y + 10 * mm)
     c.rotate(180)
     c.drawCentredString(0, -2.8, kind.upper())
     c.restoreState()
     c.setFillColor(INK)
     size = 17
-    while c.stringWidth(name, 'Helvetica-Bold', size) > CARD_W - 14 * mm:
+    while c.stringWidth(name, 'Helvetica-Bold', size) > w - 14 * mm:
         size -= 1
     c.setFont('Helvetica-Bold', size)
-    c.drawCentredString(x + CARD_W / 2, y + CARD_H / 2 - size * 0.35, name)
+    c.drawCentredString(x + w / 2, y + h / 2 - size * 0.35, name)
 
 
 def heading(c, text, sub, top):
@@ -245,29 +253,31 @@ def page_one(c, pages, corner_layout=False):
     c.drawString(x0 + 104 * mm, yb - 1, 'This bar should measure 100 mm.')
 
 
-def card_pages(c, names, corner_layout=False, fronts=False):
+def card_pages(c, names, corner_layout=False, fronts=False, size=TEST_SHEET):
     """A page of card backs, or with `fronts` the page to print on its other side:
     the same cards with columns swapped, because turning the sheet over on its long
     edge swaps left and right."""
     W, H = A4
+    w, h = size['w'], size['h']
     gap_x, gap_y = 3 * mm, 6 * mm
-    left = (W - (3 * CARD_W + 2 * gap_x)) / 2
-    top = H - (H - (3 * CARD_H + 2 * gap_y)) / 2
+    left = (W - (3 * w + 2 * gap_x)) / 2
+    top = H - (H - (3 * h + 2 * gap_y)) / 2
     order = list(CARD_MARKERS)
     for i, name in enumerate(names):
         r, col = divmod(i, 3)
         if fronts:
             col = 2 - col
-            x = left + col * (CARD_W + gap_x)
-            y = top - (r + 1) * CARD_H - r * gap_y
-            card_front(c, x, y, name, order.index(name))
+            x = left + col * (w + gap_x)
+            y = top - (r + 1) * h - r * gap_y
+            card_front(c, x, y, name, order.index(name), w, h)
             continue
-        x = left + col * (CARD_W + gap_x)
-        y = top - (r + 1) * CARD_H - r * gap_y
-        card_back(c, x, y, CARD_MARKERS[name], CARD_CORNERS[name] if corner_layout else None)
+        x = left + col * (w + gap_x)
+        y = top - (r + 1) * h - r * gap_y
+        card_back(c, x, y, CARD_MARKERS[name], CARD_CORNERS[name] if corner_layout else None,
+                  w=w, h=h, inset=size['inset'], frame=size['frame'])
         c.setFillColor(MUTED)
         c.setFont('Helvetica', 7)
-        c.drawCentredString(x + CARD_W / 2, y - 3.8 * mm, name)
+        c.drawCentredString(x + w / 2, y - 3.8 * mm, name)
 
 
 def size_page(c):
@@ -317,17 +327,17 @@ def build(out, corner_layout):
     print('wrote', out)
 
 
-def build_double_sided(out):
+def build_double_sided(out, size=TEST_SHEET, title='Card back test sheet: corner marks, double-sided'):
     """Just the card pages, each followed by its fronts, for printing double-sided."""
     order = list(CARD_MARKERS)
     c = canvas.Canvas(str(out), pagesize=A4)
-    c.setTitle('Card back test sheet: corner marks, double-sided')
+    c.setTitle(title)
     c.setAuthor('Cluedo Robot Players')
     for i in range(0, len(order), 9):
         names = order[i:i + 9]
-        card_pages(c, names, True)
+        card_pages(c, names, True, size=size)
         c.showPage()
-        card_pages(c, names, True, fronts=True)
+        card_pages(c, names, True, fronts=True, size=size)
         c.showPage()
     c.save()
     print('wrote', out)
@@ -337,3 +347,5 @@ if __name__ == '__main__':
     build(ROOT / 'print' / 'card-back-test-sheet.pdf', False)
     build(ROOT / 'print' / 'card-back-test-sheet-corners.pdf', True)
     build_double_sided(ROOT / 'print' / 'card-back-test-sheet-corners-double-sided.pdf')
+    build_double_sided(ROOT / 'print' / 'card-back-test-sheet-us-game-double-sided.pdf', US_GAME,
+                       'Card back test sheet: US game size, double-sided')

@@ -9,7 +9,16 @@ const CODES = MARKERS.map(s => Uint8Array.from(s, ch => (ch === '1' ? 1 : 0)));
 // Card layout in millimetres, as printed: an 8 mm marker whose corner is 5.5 mm in
 // from the card's top-left corner (and the same, turned round, at the bottom right).
 export const CARD = { w: 63, h: 88, marker: 8, inset: 5.5 };
-const TO_CENTRE = { right: CARD.w / 2 - CARD.inset - CARD.marker / 2, down: CARD.h / 2 - CARD.inset - CARD.marker / 2 };
+const toCentre = size => ({ right: size.w / 2 - size.inset - CARD.marker / 2, down: size.h / 2 - size.inset - CARD.marker / 2 });
+const TO_CENTRE = toCentre(CARD);
+
+// The corner-mark layout comes in two card sizes: the home-printed test cards, and the
+// deck from MakePlayingCards in their US game size (2.2 x 3.43 in, the size of real
+// Clue cards), whose narrower card brings the marks closer together.
+export const CORNER_SIZES = [
+  { name: 'test sheet', w: 63, h: 88, inset: 5.5 },
+  { name: 'US game', w: 2.2 * 25.4, h: 3.43 * 25.4, inset: 5.25 },
+];
 
 export function grayOf(rgba, w, h) {
   const gray = new Uint8ClampedArray(w * h);
@@ -264,11 +273,13 @@ export function cardsFrom(markers) {
 // putting the card's centre somewhere; the marks of one card agree on one spot. Three
 // marks are enough, because the fourth corner holds whichever number is left over.
 // Returns cards like cardsFrom does, using the same ids as the single-code layout,
-// plus `unread`: places where marks clearly form a card that couldn't be told apart.
-const CORNER_SPOTS = [[-1, -1], [-1, 1], [1, 1], [1, -1]].map(([x, y]) => [x * TO_CENTRE.right, y * TO_CENTRE.down]);
+// plus `unread`: places where marks clearly form a card that couldn't be told apart,
+// and `loose`: marks that fit no card. `size` is one of CORNER_SIZES.
 const CARD_BY_CORNERS = Object.fromEntries(Object.entries(CARD_CORNERS).map(([name, order]) => [order, CARD_MARKERS[name]]));
 
-export function cardsFromCorners(markers) {
+export function cardsFromCorners(markers, size = CORNER_SIZES[0]) {
+  const to = toCentre(size);
+  const CORNER_SPOTS = [[-1, -1], [-1, 1], [1, 1], [1, -1]].map(([x, y]) => [x * to.right, y * to.down]);
   const marks = markers.filter(m => CORNER_MARKS.includes(m.id)).map(m => {
     const { right, down, s } = mmSteps(m);
     const r = Math.hypot(...right);
@@ -350,7 +361,11 @@ export function rowsOf(cards) {
 export function readLayout(img) {
   const markers = findMarkers(img);
   const single = cardsFrom(markers);
-  const corner = cardsFromCorners(markers);
+  // All the cards in one photo come from one deck, so read the corner marks as each
+  // card size and keep the size that puts the most marks on cards.
+  const score = r => [r.cards.reduce((t, c) => t + c.markers, 0), r.cards.length, -r.unread.length];
+  const better = (a, b) => { const x = score(a), y = score(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+  const corner = CORNER_SIZES.map(size => cardsFromCorners(markers, size)).reduce((a, b) => (better(b, a) > 0 ? b : a));
   const cards = single.cards.concat(corner.cards);
   // A card with only two corners readable could be one of two cards. If all but one of
   // those are lying elsewhere in the photo, it's the one left.
