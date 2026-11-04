@@ -11,6 +11,10 @@ export const EDITIONS = {
     suspect: ['Scarlet', 'Mustard', 'White', 'Green', 'Peacock', 'Plum'],
     weapon: ['Candlestick', 'Dagger', 'Lead Pipe', 'Pistol', 'Rope', 'Wrench'],
     room: ['Bathroom', 'Bedroom', 'Courtyard', 'Dining Room', 'Game Room', 'Garage', 'Kitchen', 'Living Room', 'Office'] } },
+  printed: { label: 'Our printed deck', cards: {
+    suspect: ['Scarlet', 'Mustard', 'White', 'Green', 'Peacock', 'Plum'],
+    weapon: ['Candlestick', 'Knife', 'Lead Pipe', 'Revolver', 'Rope', 'Wrench'],
+    room: ['Bathroom', 'Bedroom', 'Courtyard', 'Dining Room', 'Game Room', 'Garage', 'Kitchen', 'Living Room', 'Office'] } },
   cluedo: { label: 'Cluedo (classic)', cards: {
     suspect: ['Miss Scarlett', 'Colonel Mustard', 'Mrs White', 'Reverend Green', 'Mrs Peacock', 'Professor Plum'],
     weapon: ['Candlestick', 'Dagger', 'Lead Piping', 'Revolver', 'Rope', 'Spanner'],

@@ -34,7 +34,7 @@ while len(codes) < N_CODES:
     codes.append(c)
 
 DECK = ['Scarlet', 'Mustard', 'White', 'Green', 'Peacock', 'Plum',
-        'Candlestick', 'Dagger', 'Lead Pipe', 'Pistol', 'Rope', 'Wrench',
+        'Candlestick', 'Knife', 'Lead Pipe', 'Revolver', 'Rope', 'Wrench',
         'Bathroom', 'Bedroom', 'Courtyard', 'Dining Room', 'Game Room', 'Garage', 'Kitchen', 'Living Room', 'Office']
 # The 24 ways to put marks 1-4 in four corners; the first 21 go to the cards.
 import itertools
@@ -48,7 +48,8 @@ export const MARKERS = {json.dumps([''.join(map(str, c)) for c in codes], indent
 // Marker 0 is the decoy printed in two corners of every card.
 export const DECOY = 0;
 
-// Which marker each card of the Clue (2013) house-room deck carries. Markers 22-33
+// Which marker each card of our printed deck carries (the Clue 2013 house rooms, with
+// a Knife and a Revolver). Markers 22-33
 // are only used on the size test page.
 export const CARD_MARKERS = {json.dumps({name: i + 1 for i, name in enumerate(DECK)}, indent=2)};
 
