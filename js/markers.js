@@ -45,9 +45,8 @@ export const MARKERS = [
 // Marker 0 is the decoy printed in two corners of every card.
 export const DECOY = 0;
 
-// Which marker each card of our printed deck carries (the Clue 2013 house rooms, with
-// a Knife and a Revolver). Markers 22-33
-// are only used on the size test page.
+// Which marker each card of our printed deck carries: the cards of Clue (2013), house
+// rooms only. Markers 22-33 are only used on the size test page.
 export const CARD_MARKERS = {
   "Scarlet": 1,
   "Mustard": 2,
@@ -56,9 +55,9 @@ export const CARD_MARKERS = {
   "Peacock": 5,
   "Plum": 6,
   "Candlestick": 7,
-  "Knife": 8,
+  "Dagger": 8,
   "Lead Pipe": 9,
-  "Revolver": 10,
+  "Pistol": 10,
   "Rope": 11,
   "Wrench": 12,
   "Bathroom": 13,
@@ -89,9 +88,9 @@ export const CARD_CORNERS = {
   "Peacock": "1423",
   "Plum": "1432",
   "Candlestick": "2134",
-  "Knife": "2143",
+  "Dagger": "2143",
   "Lead Pipe": "2314",
-  "Revolver": "2341",
+  "Pistol": "2341",
   "Rope": "2413",
   "Wrench": "2431",
   "Bathroom": "3124",

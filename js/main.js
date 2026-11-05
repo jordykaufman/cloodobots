@@ -43,6 +43,10 @@ function hostBoot() {
   store.set(K.role, 'host');
   const saved = store.get(K.host);
   R.state = saved && saved.state && saved.state.setup ? saved.state : newState();
+  // A card set that no longer exists (the printed deck now has the same cards as Clue
+  // 2013) falls back to the default one.
+  const st = R.state.setup;
+  if (st.edition !== 'custom' && !EDITIONS[st.edition]) { st.edition = 'clue2013'; st.cards = clone(EDITIONS.clue2013.cards); }
   R.code = (saved && saved.code) || newCode();
   R.M = null;
   const ui = store.get(K.ui);
