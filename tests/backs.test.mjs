@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findMarkers, readLayout, CARD, CORNER_SIZES } from '../js/backs.js';
+import { findMarkers, readLayout, cardsFromCorners, CARD, CORNER_SIZES } from '../js/backs.js';
 import { MARKERS, DECOY, CARD_MARKERS, CORNER_MARKS, CARD_CORNERS } from '../js/markers.js';
 
 // Paints card backs into a grayscale image: a dark card with its code top left and,
@@ -104,3 +104,30 @@ for (const size of CORNER_SIZES) {
     assert.deepEqual(res.doubles, []);
   });
 }
+
+// The hardest spacing: two cards facing the same way, with a gap just wide enough
+// that the left card's right-hand marks and the right card's left-hand marks line up
+// exactly like the corners of a card lying between them. The marks are built directly
+// and listed with those four first, so the phantom is the first card the reader can
+// form. Every pair of cards, at both sizes.
+test("isn't fooled by marks of neighbouring cards lining up like a card between them", () => {
+  const names = Object.keys(CARD_MARKERS), nameOf = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
+  const P = 6, M = CARD.marker, fooled = [];
+  for (const size of CORNER_SIZES) {
+    const i = size.inset, gap = size.w - 4 * i - 2 * M;
+    const spots = [[i, i], [i, size.h - i - M], [size.w - i - M, size.h - i - M], [size.w - i - M, i]];
+    for (const a of names) for (const b of names) {
+      if (a === b) continue;
+      const marks = [];
+      [a, b].forEach((name, c) => spots.forEach(([mx, my], k) => {
+        const x = (c * (size.w + gap) + mx) * P, y = my * P, s = M * P;
+        const first = (c === 0 && k >= 2) || (c === 1 && k <= 1);
+        marks.push({ first, id: CORNER_MARKS[+CARD_CORNERS[name][k] - 1], centre: [x + s / 2, y + s / 2], corners: [[x, y], [x + s, y], [x + s, y + s], [x, y + s]] });
+      }));
+      marks.sort((p, q) => q.first - p.first);
+      const got = cardsFromCorners(marks, size).cards.map(c => nameOf[c.id]).sort();
+      if (got.join() !== [a, b].sort().join()) fooled.push(`${size.name}: ${a} + ${b} read as ${got.join(' + ') || 'nothing'}`);
+    }
+  }
+  assert.deepEqual(fooled, []);
+});

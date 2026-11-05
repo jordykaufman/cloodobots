@@ -293,7 +293,8 @@ export function cardsFromCorners(markers, size = CORNER_SIZES[0]) {
   })));
   const taken = new Set(), cards = [], unread = [];
   for (;;) {
-    let best = null;
+    // Every way the marks still free could form a card.
+    const candidates = new Map();
     for (const g of guesses) {
       if (taken.has(g.i)) continue;
       // Marks of one card face the same way, sit in different corners and carry
@@ -306,28 +307,64 @@ export function cardsFromCorners(markers, size = CORNER_SIZES[0]) {
         if (corners.has(h.corner) || numbers.has(h.k.number)) continue;
         members.set(h.i, h); corners.add(h.corner); numbers.add(h.k.number);
       }
-      if (!best || members.size > best.size) best = members;
+      if (members.size < 2) continue;
+      const key = [...members.values()].map(h => `${h.i}:${h.corner}`).sort().join(' ');
+      if (candidates.has(key)) continue;
+      const hs = [...members.values()];
+      const cx = hs.reduce((t, h) => t + h.x, 0) / hs.length, cy = hs.reduce((t, h) => t + h.y, 0) / hs.length;
+      const spread = hs.reduce((t, h) => t + Math.hypot(h.x - cx, h.y - cy) / h.k.s, 0) / hs.length;
+      candidates.set(key, { members, spread });
     }
-    if (!best || best.size < 2) break;
+    if (!candidates.size) break;
+    // When cards lie a certain distance apart, the right-hand marks of one card and the
+    // left-hand marks of the next can line up like a card in the gap. Such a phantom
+    // borrows marks from two real cards, so it clashes with more strong candidates
+    // than a real card does: take the biggest candidates first, and among those the
+    // ones that clash least, then the ones whose marks agree most closely.
+    const list = [...candidates.values()];
+    for (const c of list) {
+      c.clashes = list.filter(d => d !== c && d.members.size >= 3 && [...d.members.keys()].some(i => c.members.has(i))).length;
+    }
+    list.sort((a, b) => b.members.size - a.members.size || a.clashes - b.clashes || a.spread - b.spread);
+    const best = list[0].members;
     const ms = [...best.values()];
     ms.forEach(h => taken.add(h.i));
-    const order = [0, 0, 0, 0];
-    for (const h of ms) order[h.corner] = h.k.number;
-    const left = [1, 2, 3, 4].filter(n => !order.includes(n));
-    const gaps = order.map((n, i) => (n ? -1 : i)).filter(i => i >= 0);
-    // Fill the empty corners every possible way; keep the fills that name a card.
-    const fills = [];
-    const fill = (o, rest, at) => {
-      if (at === gaps.length) { const key = o.join(''); if (CARD_BY_CORNERS[key]) fills.push(CARD_BY_CORNERS[key]); return; }
-      rest.forEach((n, j) => { o[gaps[at]] = n; fill(o, rest.filter((_, q) => q !== j), at + 1); o[gaps[at]] = 0; });
-    };
-    fill(order.slice(), left, 0);
-    const centre = [ms.reduce((t, h) => t + h.x, 0) / ms.length, ms.reduce((t, h) => t + h.y, 0) / ms.length];
+    // Two marks along one side of a card fit just as well as the pair on the opposite
+    // side, with the card lying the other way from them, so try both readings. Corners
+    // are 0 top left, 1 bottom left, 2 bottom right, 3 top right.
+    const readings = [ms.map(h => ({ h, corner: h.corner }))];
+    if (ms.length === 2) {
+      const pair = ms.map(h => h.corner).sort().join('');
+      const swap = pair === '03' || pair === '12' ? [1, 0, 3, 2] : pair === '01' || pair === '23' ? [3, 2, 1, 0] : null;
+      if (swap) readings.push(ms.map(h => ({ h, corner: swap[h.corner] })));
+    }
+    // Each reading: fill the empty corners every possible way and keep the fills that
+    // name a card, each with where that reading puts the card's centre.
+    const options = [];
+    for (const reading of readings) {
+      const order = [0, 0, 0, 0];
+      for (const { h, corner } of reading) order[corner] = h.k.number;
+      const left = [1, 2, 3, 4].filter(n => !order.includes(n));
+      const gaps = order.map((n, i) => (n ? -1 : i)).filter(i => i >= 0);
+      const fills = [];
+      const fill = (o, rest, at) => {
+        if (at === gaps.length) { const key = o.join(''); if (CARD_BY_CORNERS[key]) fills.push(CARD_BY_CORNERS[key]); return; }
+        rest.forEach((n, j) => { o[gaps[at]] = n; fill(o, rest.filter((_, q) => q !== j), at + 1); o[gaps[at]] = 0; });
+      };
+      fill(order.slice(), left, 0);
+      const spots = reading.map(({ h, corner }) => guesses.find(q => q.i === h.i && q.corner === corner));
+      const centre = [spots.reduce((t, q) => t + q.x, 0) / spots.length, spots.reduce((t, q) => t + q.y, 0) / spots.length];
+      for (const id of fills) if (!options.some(o => o.id === id)) options.push({ id, centre });
+    }
     const mm = ms.reduce((t, h) => t + h.k.s, 0) / ms.length;
     const d = ms[0].k.down, dl = Math.hypot(...d);
-    const card = { centre, axis: [d[0] / dl, d[1] / dl], mm, markers: ms.length };
-    if (fills.length === 1) cards.push({ id: fills[0], ...card });
-    else unread.push({ ...card, candidates: fills });
+    const card = { axis: [d[0] / dl, d[1] / dl], mm, markers: ms.length };
+    if (options.length === 1) cards.push({ id: options[0].id, centre: options[0].centre, ...card });
+    else {
+      const centre = options.length ? options[0].centre
+        : [ms.reduce((t, h) => t + h.x, 0) / ms.length, ms.reduce((t, h) => t + h.y, 0) / ms.length];
+      unread.push({ ...card, centre, candidates: options.map(o => o.id), centres: Object.fromEntries(options.map(o => [o.id, o.centre])) });
+    }
   }
   const loose = marks.filter((_, i) => !taken.has(i)).map(k => ({ number: k.number, centre: k.centre, mm: k.s }));
   return { cards, unread, loose };
@@ -376,7 +413,7 @@ export function readLayout(img) {
     unread = unread.filter(u => {
       const left = u.candidates.filter(id => !seen.has(id));
       if (left.length !== 1) return true;
-      cards.push({ id: left[0], centre: u.centre, axis: u.axis, mm: u.mm, markers: u.markers });
+      cards.push({ id: left[0], centre: (u.centres && u.centres[left[0]]) || u.centre, axis: u.axis, mm: u.mm, markers: u.markers });
       seen.add(left[0]);
       changed = true;
       return false;
