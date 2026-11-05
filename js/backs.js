@@ -2,7 +2,7 @@
 // cards lying face-down, and works out which cards lie in which row. Everything works
 // on a plain grayscale array, so the same code runs in the browser and in the tests.
 
-import { MARKERS, DECOY, CORNER_MARKS, CARD_CORNERS, CARD_MARKERS } from './markers.js';
+import { MARKERS, DECOY, REG_MARK, BEZEL, BEZEL_CODES, CARD_MARKERS } from './markers.js';
 
 const CODES = MARKERS.map(s => Uint8Array.from(s, ch => (ch === '1' ? 1 : 0)));
 
@@ -12,10 +12,10 @@ export const CARD = { w: 63, h: 88, marker: 8, inset: 5.5 };
 const toCentre = size => ({ right: size.w / 2 - size.inset - CARD.marker / 2, down: size.h / 2 - size.inset - CARD.marker / 2 });
 const TO_CENTRE = toCentre(CARD);
 
-// The corner-mark layout comes in two card sizes: the home-printed test cards, and the
-// deck from MakePlayingCards in their US game size (2.2 x 3.43 in, the size of real
-// Clue cards), whose narrower card brings the marks closer together.
-export const CORNER_SIZES = [
+// The bezel layout comes in two card sizes: the home-printed test cards, and the deck
+// from MakePlayingCards in their US game size (2.2 x 3.43 in, the size of real Clue
+// cards), whose narrower card brings the marks closer together.
+export const CARD_SIZES = [
   { name: 'test sheet', w: 63, h: 88, inset: 5.5 },
   { name: 'US game', w: 2.2 * 25.4, h: 3.43 * 25.4, inset: 5.25 },
 ];
@@ -236,7 +236,7 @@ function mmSteps(m) {
 export function cardsFrom(markers) {
   const byId = new Map();
   for (const m of markers) {
-    if (m.id === DECOY || CORNER_MARKS.includes(m.id)) continue;
+    if (m.id === DECOY || m.id === REG_MARK) continue;
     const { right, down, s } = mmSteps(m);
     const centre = [m.centre[0] + right[0] * TO_CENTRE.right + down[0] * TO_CENTRE.down, m.centre[1] + right[1] * TO_CENTRE.right + down[1] * TO_CENTRE.down];
     if (!byId.has(m.id)) byId.set(m.id, []);
@@ -267,106 +267,225 @@ export function cardsFrom(markers) {
   return { cards, doubles };
 }
 
-// The corner-mark layout: every card carries marks 1-4, one per corner, all facing the
-// card's top, and which corner holds which number tells the cards apart. A mark on its
-// own doesn't say which corner it's in, so each mark guesses all four, each guess
-// putting the card's centre somewhere; the marks of one card agree on one spot. Three
-// marks are enough, because the fourth corner holds whichever number is left over.
-// Returns cards like cardsFrom does, using the same ids as the single-code layout,
-// plus `unread`: places where marks clearly form a card that couldn't be told apart,
-// and `loose`: marks that fit no card. `size` is one of CORNER_SIZES.
-const CARD_BY_CORNERS = Object.fromEntries(Object.entries(CARD_CORNERS).map(([name, order]) => [order, CARD_MARKERS[name]]));
+/* ---------- the bezel layout ---------- */
 
-export function cardsFromCorners(markers, size = CORNER_SIZES[0]) {
-  const to = toCentre(size);
-  const CORNER_SPOTS = [[-1, -1], [-1, 1], [1, 1], [1, -1]].map(([x, y]) => [x * to.right, y * to.down]);
-  const marks = markers.filter(m => CORNER_MARKS.includes(m.id)).map(m => {
-    const { right, down, s } = mmSteps(m);
-    const r = Math.hypot(...right);
-    return { number: CORNER_MARKS.indexOf(m.id) + 1, right, down, s, facing: [right[0] / r, right[1] / r], centre: m.centre };
-  });
-  const guesses = [];
-  marks.forEach((k, i) => CORNER_SPOTS.forEach(([dx, dy], corner) => guesses.push({
-    i, corner, k,
-    x: k.centre[0] - (k.right[0] * dx + k.down[0] * dy),
-    y: k.centre[1] - (k.right[1] * dx + k.down[1] * dy),
-  })));
-  const taken = new Set(), cards = [], unread = [];
-  for (;;) {
-    // Every way the marks still free could form a card.
-    const candidates = new Map();
-    for (const g of guesses) {
-      if (taken.has(g.i)) continue;
-      // Marks of one card face the same way, sit in different corners and carry
-      // different numbers.
-      const members = new Map(), corners = new Set(), numbers = new Set();
-      for (const h of guesses) {
-        if (taken.has(h.i) || members.has(h.i)) continue;
-        if (Math.hypot(h.x - g.x, h.y - g.y) > 7 * g.k.s) continue;
-        if (h.k.facing[0] * g.k.facing[0] + h.k.facing[1] * g.k.facing[1] < 0.85) continue;
-        if (corners.has(h.corner) || numbers.has(h.k.number)) continue;
-        members.set(h.i, h); corners.add(h.corner); numbers.add(h.k.number);
+// Every card carries the same mark in each corner, the bottom two turned round, so the
+// back is the same picture either way up. The marks only say where the card lies. The
+// card's code is the ring of graduations round the compass rose: a tick every 5
+// degrees, each long or short.
+const RINGS = Object.entries(BEZEL_CODES).map(([name, bits]) => ({ id: CARD_MARKERS[name], bits: Uint8Array.from(bits, ch => (ch === '1' ? 1 : 0)) }));
+const HALF_TURN = BEZEL.ticks / 2;
+const R_LONG_ONLY = (BEZEL.short + BEZEL.long) / 2;   // only long ticks reach this far in
+const R_ALL = (BEZEL.ring + BEZEL.short) / 2;         // every tick has ink here
+
+// A frame maps card millimetres (x right, y down from the card's centre) to pixels:
+// px = c + M (u, v).
+const at = (f, u, v) => [f.c[0] + f.M[0] * u + f.M[1] * v, f.c[1] + f.M[2] * u + f.M[3] * v];
+const dir = t => [Math.sin(t), -Math.cos(t)];     // the card-frame direction t radians clockwise from the card's top
+const ppmOf = f => (Math.hypot(f.M[0], f.M[2]) + Math.hypot(f.M[1], f.M[3])) / 2;
+
+// The brightest pixel within r of (x, y), and the average there; -1 off the photo.
+function peak(img, [x, y], r) {
+  let best = -1;
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { const v = sample(img, x + dx, y + dy); if (v > best) best = v; }
+  return best;
+}
+function mean(img, [x, y], r) {
+  let s = 0, n = 0;
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { const v = sample(img, x + dx, y + dy); if (v < 0) return -1; s += v; n++; }
+  return s / n;
+}
+
+// Solves the 3x3 system A x = b (Cramer's rule).
+function solve3(A, b) {
+  const det = m => m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+  const D = det(A);
+  if (Math.abs(D) < 1e-9) return null;
+  return [0, 1, 2].map(i => { const m = A.slice(); m[i] = b[0]; m[3 + i] = b[1]; m[6 + i] = b[2]; return det(m) / D; });
+}
+
+// Fits the brass circle round the rose. Starting from a rough frame (the card's centre
+// and pixels per millimetre, from its corner marks), it looks along 48 spokes for the
+// circle's bright line, fits the frame to where the line is, and repeats more closely.
+// Returns the fitted frame with the circle's contrast against the navy either side of
+// it, or null if there's no circle there, which is how a card is told from marks of
+// neighbouring cards that happen to line up like one.
+function fitCircle(img, frame) {
+  const R = BEZEL.circle;
+  let f = frame, rms = 0;
+  for (const reach of [3.5, 1.5, 1]) {
+    const step = Math.min(0.25, 0.5 / ppmOf(f));
+    const pts = [];
+    for (let k = 0; k < 48; k++) {
+      const d = dir(k * Math.PI / 24);
+      let bestR = 0, bestV = -1, sum = 0, n = 0;
+      for (let r = R - reach; r <= R + reach; r += step) {
+        const v = sample(img, ...at(f, r * d[0], r * d[1]));
+        if (v < 0) { n = 0; break; }
+        sum += v; n++;
+        if (v > bestV) { bestV = v; bestR = r; }
       }
-      if (members.size < 2) continue;
-      const key = [...members.values()].map(h => `${h.i}:${h.corner}`).sort().join(' ');
-      if (candidates.has(key)) continue;
-      const hs = [...members.values()];
-      const cx = hs.reduce((t, h) => t + h.x, 0) / hs.length, cy = hs.reduce((t, h) => t + h.y, 0) / hs.length;
-      const spread = hs.reduce((t, h) => t + Math.hypot(h.x - cx, h.y - cy) / h.k.s, 0) / hs.length;
-      candidates.set(key, { members, spread });
+      if (n && bestV - sum / n >= 12) pts.push({ d, p: at(f, bestR * d[0], bestR * d[1]) });
     }
-    if (!candidates.size) break;
-    // When cards lie a certain distance apart, the right-hand marks of one card and the
-    // left-hand marks of the next can line up like a card in the gap. Such a phantom
-    // borrows marks from two real cards, so it clashes with more strong candidates
-    // than a real card does: take the biggest candidates first, and among those the
-    // ones that clash least, then the ones whose marks agree most closely.
-    const list = [...candidates.values()];
-    for (const c of list) {
-      c.clashes = list.filter(d => d !== c && d.members.size >= 3 && [...d.members.keys()].some(i => c.members.has(i))).length;
+    if (pts.length < 16) return null;
+    // Least squares for each of x and y: p = c + M (R d).
+    const A = [0, 0, 0, 0, 0, 0, 0, 0, 0], bx = [0, 0, 0], by = [0, 0, 0];
+    for (const { d, p } of pts) {
+      const row = [1, R * d[0], R * d[1]];
+      for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) A[i * 3 + j] += row[i] * row[j]; bx[i] += row[i] * p[0]; by[i] += row[i] * p[1]; }
     }
-    list.sort((a, b) => b.members.size - a.members.size || a.clashes - b.clashes || a.spread - b.spread);
-    const best = list[0].members;
-    const ms = [...best.values()];
-    ms.forEach(h => taken.add(h.i));
-    // Two marks along one side of a card fit just as well as the pair on the opposite
-    // side, with the card lying the other way from them, so try both readings. Corners
-    // are 0 top left, 1 bottom left, 2 bottom right, 3 top right.
-    const readings = [ms.map(h => ({ h, corner: h.corner }))];
-    if (ms.length === 2) {
-      const pair = ms.map(h => h.corner).sort().join('');
-      const swap = pair === '03' || pair === '12' ? [1, 0, 3, 2] : pair === '01' || pair === '23' ? [3, 2, 1, 0] : null;
-      if (swap) readings.push(ms.map(h => ({ h, corner: swap[h.corner] })));
+    const X = solve3(A, bx), Y = solve3(A, by);
+    if (!X || !Y) return null;
+    f = { c: [X[0], Y[0]], M: [X[1], X[2], Y[1], Y[2]] };
+    const ppm = ppmOf(f);
+    rms = Math.sqrt(pts.reduce((t, { d, p }) => { const q = at(f, R * d[0], R * d[1]); return t + ((q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2) / (ppm * ppm); }, 0) / pts.length);
+    if (ppm < 2 || rms > 1.5) return null;
+  }
+  let on = 0, off = 0;
+  for (let k = 0; k < 48; k++) {
+    const d = dir(k * Math.PI / 24);
+    const a = sample(img, ...at(f, R * d[0], R * d[1])), b = sample(img, ...at(f, (R - 1.1) * d[0], (R - 1.1) * d[1])), e = sample(img, ...at(f, (R + 1.2) * d[0], (R + 1.2) * d[1]));
+    if (a < 0 || b < 0 || e < 0) return null;
+    on += a; off += (b + e) / 2;
+  }
+  const contrast = (on - off) / 48;
+  return contrast >= 15 && rms <= 0.5 ? { ...f, contrast, rms } : null;
+}
+
+// Reads the ring. For each tick: its brightness along the stretch only long ticks
+// reach, against the navy just inside that on the same line (nothing else is near
+// there, whereas between ticks the neighbours' ink blurs in) and against the tick's
+// own ink nearer the ring. Brightness is averaged along the tick (and takes the best
+// of three lines across it, in case the frame is a little off), which lifts faint ticks
+// out of the noise. The dividing line between long and short is found from the ring
+// itself, since about half its ticks are long. A tick whose ink can't be seen at all
+// is left unknown. Returns the ticks (1 long, 0 short, -1 unknown) and the ticks'
+// typical contrast.
+function readTicks(img, f) {
+  const step = Math.min(0.2, 0.5 / ppmOf(f)), across = [-0.12, 0, 0.12];
+  const zone = (t, r0, r1) => {
+    const d = dir(t), n = [-d[1], d[0]];
+    let s = 0, k = 0;
+    for (let r = r0; r <= r1 + 1e-9; r += step) {
+      let best = -1;
+      for (const w of across) { const v = sample(img, ...at(f, r * d[0] + w * n[0], r * d[1] + w * n[1])); if (v > best) best = v; }
+      if (best < 0) return -1;
+      s += best; k++;
     }
-    // Each reading: fill the empty corners every possible way and keep the fills that
-    // name a card, each with where that reading puts the card's centre.
-    const options = [];
-    for (const reading of readings) {
-      const order = [0, 0, 0, 0];
-      for (const { h, corner } of reading) order[corner] = h.k.number;
-      const left = [1, 2, 3, 4].filter(n => !order.includes(n));
-      const gaps = order.map((n, i) => (n ? -1 : i)).filter(i => i >= 0);
-      const fills = [];
-      const fill = (o, rest, at) => {
-        if (at === gaps.length) { const key = o.join(''); if (CARD_BY_CORNERS[key]) fills.push(CARD_BY_CORNERS[key]); return; }
-        rest.forEach((n, j) => { o[gaps[at]] = n; fill(o, rest.filter((_, q) => q !== j), at + 1); o[gaps[at]] = 0; });
-      };
-      fill(order.slice(), left, 0);
-      const spots = reading.map(({ h, corner }) => guesses.find(q => q.i === h.i && q.corner === corner));
-      const centre = [spots.reduce((t, q) => t + q.x, 0) / spots.length, spots.reduce((t, q) => t + q.y, 0) / spots.length];
-      for (const id of fills) if (!options.some(o => o.id === id)) options.push({ id, centre });
-    }
-    const mm = ms.reduce((t, h) => t + h.k.s, 0) / ms.length;
-    const d = ms[0].k.down, dl = Math.hypot(...d);
-    const card = { axis: [d[0] / dl, d[1] / dl], mm, markers: ms.length };
-    if (options.length === 1) cards.push({ id: options[0].id, centre: options[0].centre, ...card });
-    else {
-      const centre = options.length ? options[0].centre
-        : [ms.reduce((t, h) => t + h.x, 0) / ms.length, ms.reduce((t, h) => t + h.y, 0) / ms.length];
-      unread.push({ ...card, centre, candidates: options.map(o => o.id), centres: Object.fromEntries(options.map(o => [o.id, o.centre])) });
+    return s / k;
+  };
+  const N = BEZEL.ticks, far = [], ink = [], bg = [];
+  const longOnly = [BEZEL.long + 0.15, BEZEL.short - 0.15], all = [BEZEL.short + 0.15, BEZEL.ring - 0.25], navy = [BEZEL.long - 1, BEZEL.long - 0.5];
+  for (let i = 0; i < N; i++) {
+    const t = i * 2 * Math.PI / N;
+    far.push(zone(t, ...longOnly));
+    ink.push(zone(t, ...all));
+    bg.push(zone(t, ...navy));
+  }
+  // Each tick's ink contrast, smoothed over its neighbours so one noisy tick doesn't
+  // throw its own reading.
+  const contrast = [], v = [];
+  for (let i = 0; i < N; i++) {
+    let s = 0, k = 0;
+    for (let j = -2; j <= 2; j++) { const q = (i + j + N) % N; if (ink[q] >= 0 && bg[q] >= 0) { s += ink[q] - bg[q]; k++; } }
+    contrast.push(k ? s / k : -1);
+    v.push(far[i] < 0 || bg[i] < 0 || contrast[i] < 6 ? NaN : (far[i] - bg[i]) / contrast[i]);
+  }
+  // Split the known ticks into long and short: two means, starting from short and long.
+  const known = v.filter(x => !Number.isNaN(x));
+  let lo = 0.1, hi = 0.9;
+  for (let it = 0; it < 10 && known.length; it++) {
+    let sl = 0, nl = 0, sh = 0, nh = 0;
+    for (const x of known) { if (Math.abs(x - lo) < Math.abs(x - hi)) { sl += x; nl++; } else { sh += x; nh++; } }
+    if (nl) lo = sl / nl; if (nh) hi = sh / nh;
+  }
+  const cut = hi - lo >= 0.3 ? Math.min(0.7, Math.max(0.3, (lo + hi) / 2)) : 0.5;
+  const bits = new Int8Array(N);
+  for (let i = 0; i < N; i++) bits[i] = Number.isNaN(v[i]) ? -1 : v[i] > cut ? 1 : 0;
+  const seen = contrast.filter(c => c >= 0).sort((a, b) => a - b);
+  return { bits, contrast: seen.length ? seen[seen.length >> 1] : 0 };
+}
+
+// Which card a ring is, tried both ways up, judged on the ticks that could be read:
+// at least 36 of them, at most a sixth of those wrong, and the runner-up at least a
+// tenth of them further off. Returns { id, dist } with how many ticks were wrong.
+function nameRing(bits) {
+  const known = []; bits.forEach((b, i) => { if (b >= 0) known.push(i); });
+  if (known.length < 36) return null;
+  let best = null, second = Infinity;
+  for (const { id, bits: code } of RINGS) {
+    for (const shift of [0, HALF_TURN]) {
+      let d = 0;
+      for (const i of known) if (bits[i] !== code[(i + shift) % BEZEL.ticks]) d++;
+      if (!best || d < best.dist) { if (best && best.id !== id) second = Math.min(second, best.dist); best = { id, dist: d }; }
+      else if (id !== best.id && d < second) second = d;
     }
   }
-  const loose = marks.filter((_, i) => !taken.has(i)).map(k => ({ number: k.number, centre: k.centre, mm: k.s }));
+  return best.dist <= known.length / 6 && second - best.dist >= Math.max(3, known.length / 10) ? best : null;
+}
+
+// Reads the bezel layout. A mark on its own doesn't say which corner it's in, but it
+// can only be a top-left or a top-right mark of a card the way up that makes the mark
+// upright (a bottom mark, printed turned round, is a top mark of the card turned
+// round, which is the same picture), so each mark guesses the card's centre twice.
+// The marks of one card agree on a spot, and there is a brass circle round it. Returns
+// cards { id, centre, axis, mm, markers, ring, contrast, errors }, `unread`: cards
+// whose ring matched no code, and `loose`: marks that fit no card. `size` is one of
+// CARD_SIZES.
+export function cardsFromBezels(markers, img, size = CARD_SIZES[0]) {
+  const to = toCentre(size);
+  const marks = markers.filter(m => m.id === REG_MARK).map(m => {
+    const { right, down, s } = mmSteps(m);
+    const r = Math.hypot(...right);
+    return { right, down, s, facing: [right[0] / r, right[1] / r], centre: m.centre };
+  });
+  const guesses = [];
+  marks.forEach((k, i) => [[1, 0], [-1, 1]].forEach(([sx, slot]) => guesses.push({
+    i, slot, k,
+    x: k.centre[0] + sx * k.right[0] * to.right + k.down[0] * to.down,
+    y: k.centre[1] + sx * k.right[1] * to.right + k.down[1] * to.down,
+  })));
+  const keys = new Set(), candidates = [];
+  for (const g of guesses) {
+    // Marks of one card lie the same way or opposite ways, and sit in different
+    // corners: 0 top left, 1 top right, 2 bottom right, 3 bottom left, seen the way up
+    // that makes the first mark upright.
+    const members = new Map(), corners = new Set();
+    for (const h of guesses) {
+      if (members.has(h.i) || Math.hypot(h.x - g.x, h.y - g.y) > 7 * g.k.s) continue;
+      const dot = h.k.facing[0] * g.k.facing[0] + h.k.facing[1] * g.k.facing[1];
+      if (Math.abs(dot) < 0.85) continue;
+      const corner = dot > 0 ? h.slot : 2 + h.slot;
+      if (corners.has(corner)) continue;
+      members.set(h.i, { h, corner, flip: dot < 0 });
+      corners.add(corner);
+    }
+    const key = [...members.values()].map(m => `${m.h.i}:${m.corner}`).sort().join(' ');
+    if (keys.has(key)) continue;
+    keys.add(key);
+    const ms = [...members.values()], n = ms.length;
+    const M = [0, 0, 0, 0];
+    for (const { h, flip } of ms) {
+      const sg = flip ? -1 : 1;
+      M[0] += sg * h.k.right[0] / n; M[2] += sg * h.k.right[1] / n; M[1] += sg * h.k.down[0] / n; M[3] += sg * h.k.down[1] / n;
+    }
+    const rough = { c: [ms.reduce((t, m) => t + m.h.x, 0) / n, ms.reduce((t, m) => t + m.h.y, 0) / n], M };
+    const ring = fitCircle(img, rough);
+    if (ring) candidates.push({ members, ring, n });
+  }
+  candidates.sort((p, q) => q.n - p.n || q.ring.contrast - p.ring.contrast);
+  const taken = new Set(), cards = [], unread = [];
+  for (const cand of candidates) {
+    if ([...cand.members.keys()].some(i => taken.has(i))) continue;
+    for (const i of cand.members.keys()) taken.add(i);
+    const f = cand.ring;
+    const { bits, contrast } = readTicks(img, f);
+    const dl = Math.hypot(f.M[1], f.M[3]);
+    const card = { centre: f.c, axis: [f.M[1] / dl, f.M[3] / dl], mm: ppmOf(f), markers: cand.n, ring: { c: f.c, M: f.M }, contrast };
+    const named = nameRing(bits);
+    if (named) cards.push({ id: named.id, errors: named.dist, ...card }); else unread.push(card);
+  }
+  const loose = marks.filter((_, i) => !taken.has(i)).map(k => ({ centre: k.centre, mm: k.s }));
   return { cards, unread, loose };
 }
 
@@ -398,29 +517,14 @@ export function rowsOf(cards) {
 export function readLayout(img) {
   const markers = findMarkers(img);
   const single = cardsFrom(markers);
-  // All the cards in one photo come from one deck, so read the corner marks as each
+  // All the cards in one photo come from one deck, so read the bezel layout as each
   // card size and keep the size that puts the most marks on cards.
   const score = r => [r.cards.reduce((t, c) => t + c.markers, 0), r.cards.length, -r.unread.length];
   const better = (a, b) => { const x = score(a), y = score(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
-  const corner = CORNER_SIZES.map(size => cardsFromCorners(markers, size)).reduce((a, b) => (better(b, a) > 0 ? b : a));
-  const cards = single.cards.concat(corner.cards);
-  // A card with only two corners readable could be one of two cards. If all but one of
-  // those are lying elsewhere in the photo, it's the one left.
-  let unread = corner.unread;
-  for (let changed = true; changed;) {
-    changed = false;
-    const seen = new Set(cards.map(c => c.id));
-    unread = unread.filter(u => {
-      const left = u.candidates.filter(id => !seen.has(id));
-      if (left.length !== 1) return true;
-      cards.push({ id: left[0], centre: (u.centres && u.centres[left[0]]) || u.centre, axis: u.axis, mm: u.mm, markers: u.markers });
-      seen.add(left[0]);
-      changed = true;
-      return false;
-    });
-  }
+  const bezel = CARD_SIZES.map(size => cardsFromBezels(markers, img, size)).reduce((a, b) => (better(b, a) > 0 ? b : a));
+  const cards = single.cards.concat(bezel.cards);
   const counts = new Map();
   for (const c of cards) counts.set(c.id, (counts.get(c.id) || 0) + 1);
   const doubles = [...new Set([...single.doubles, ...[...counts].filter(([, n]) => n > 1).map(([id]) => id)])];
-  return { markers, cards, doubles, unread, rows: rowsOf(cards) };
+  return { markers, cards, doubles, unread: bezel.unread, loose: bezel.loose, rows: rowsOf(cards) };
 }

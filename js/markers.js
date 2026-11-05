@@ -36,10 +36,7 @@ export const MARKERS = [
 "010111110110011110000010111110101110",
 "100001011001110000101111000101010000",
 "110101110101101000100100011111111011",
-"100111101010010101100101011010110010",
-"111001100110001100110010010101001101",
-"000101101011011001001010110100001101",
-"110010001100110101001011010010110100"
+"100111101010010101100101011010110010"
 ];
 
 // Marker 0 is the decoy printed in two corners of every card.
@@ -71,37 +68,40 @@ export const CARD_MARKERS = {
   "Office": 21
 };
 
-// The corner-mark layout: every card carries the same four marks, standing for 1 to 4,
-// one in each corner, and the card is told apart by which corner holds which. These
-// are the markers for marks 1, 2, 3 and 4, chosen to look like noise so a person
-// can't see which way up a card lies.
-export const CORNER_MARKS = [34, 35, 36, 37];
+// The bezel layout: every card carries this one mark in each corner, the bottom two
+// turned round, so the back is the same picture either way up. It only tells the
+// camera where the card lies; it's chosen to look like noise so a person can't see
+// which way up the card is.
+export const REG_MARK = 34;
 
-// Each card's corners, read from the top-left corner going counterclockwise (top left,
-// bottom left, bottom right, top right). "2413" puts mark 2 top left, 4 bottom left,
-// 1 bottom right and 3 top right. The marks all face the card's top, which is how the
-// reader knows where to start. The orders are shared out so that no single corner
-// hints at whether a card is a suspect, weapon or room.
-export const CARD_CORNERS = {
-  "Scarlet": "3412",
-  "Mustard": "1243",
-  "White": "2314",
-  "Green": "4132",
-  "Peacock": "1423",
-  "Plum": "4321",
-  "Candlestick": "4312",
-  "Dagger": "1432",
-  "Lead Pipe": "4213",
-  "Pistol": "1324",
-  "Rope": "2143",
-  "Wrench": "3241",
-  "Bathroom": "1342",
-  "Bedroom": "2341",
-  "Courtyard": "2413",
-  "Dining Room": "3214",
-  "Game Room": "4231",
-  "Garage": "3142",
-  "Kitchen": "4123",
-  "Living Room": "1234",
-  "Office": "3421"
+// The card's code is the ring of graduations round the compass rose: a tick every 5
+// degrees, clockwise from the card's top, each long or short. Sizes in millimetres
+// from the card's centre: the brass circle, the faint ring the ticks hang from, and
+// where short and long ticks end; `width` is a tick's thickness.
+export const BEZEL = {"ticks": 72, "circle": 16, "ring": 14.6, "short": 13.4, "long": 12.3, "width": 0.3};
+
+// Each card's ring, tick 0 first; 1 is a long tick. Any two rings differ in at least
+// 24 ticks, even against a ring turned by 36 (a card the other way up).
+export const BEZEL_CODES = {
+  "Scarlet": "001101111010101111101000011100010010101110001100010000111110111010111001",
+  "Mustard": "001100111100011011101111101111000111000011100100010001110001101100011001",
+  "White": "101000001101101001011101010111000100001000100010010011011101011011111011",
+  "Green": "101100000111101011110011000000001111110010011110111100101000100001110110",
+  "Peacock": "100111010110000010001001110010101001000001101011010011110011101010100110",
+  "Plum": "101011100001011011100010110101101010111000111100000101001110110111010111",
+  "Candlestick": "000000100110011011110111011011010110110001000111010000110011100011110010",
+  "Dagger": "010110101010111010001110000101100011111010001110101110110111010010111000",
+  "Lead Pipe": "011000001000010110000000110001111101000101000011100011110111011011010011",
+  "Pistol": "000101010110100001001111110001111001010011100001010100101010111110010100",
+  "Rope": "110110001110001111000000010001011101100011001100010011000110000110100110",
+  "Wrench": "000100110110001010010000111110111001001111101010000011100001010101111110",
+  "Bathroom": "110101101111100111010111001101111101001111011100100001010110000100000101",
+  "Bedroom": "001000110101110010011010111001000111010000100011100100100010111101110011",
+  "Courtyard": "110011000101111000000101001110100101101000100111111001101110101011010100",
+  "Dining Room": "011100000100110101101001101110111100001101011111000110000100011001101010",
+  "Game Room": "111100011111100010100101101000111000100000001101001100101011100101010000",
+  "Garage": "011100000010001111001010101010000110101000000101001000111001101111001011",
+  "Kitchen": "101111110000011001101100001111101011001000111010011010000110110101001001",
+  "Living Room": "000111110010111111111001110011010110001110010110101000100001110101100011",
+  "Office": "010010011011000000111010111101101011001010111101111111011110010010011000"
 };

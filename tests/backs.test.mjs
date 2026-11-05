@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findMarkers, readLayout, cardsFromCorners, CARD, CORNER_SIZES } from '../js/backs.js';
-import { MARKERS, DECOY, CARD_MARKERS, CORNER_MARKS, CARD_CORNERS } from '../js/markers.js';
+import { findMarkers, readLayout, CARD, CARD_SIZES } from '../js/backs.js';
+import { MARKERS, DECOY, CARD_MARKERS, REG_MARK, BEZEL, BEZEL_CODES } from '../js/markers.js';
 
 // Paints card backs into a grayscale image: a dark card with its code top left and,
 // turned round, bottom right, and the decoy in the other corners. Each card can be
@@ -60,15 +60,19 @@ test('plain noise is never read as a card', () => {
   assert.equal(findMarkers({ gray, w, h }).length, 0);
 });
 
-// Paints corner-layout card backs: marks 1-4 placed by each card's order, read
-// counterclockwise from the top left, all facing the card's top.
-function paintCorners(cards, size, w, h, pxPerMm) {
+// Paints bezel-layout card backs: the same mark in every corner (the bottom two turned
+// round), a brass circle round the centre, and the ring of long and short ticks that
+// is the card's code, drawn at `strength` (1 would be as bright as the circle). A
+// card's `hide` lists corner marks to leave out: 0 top left, 1 top right, 2 bottom
+// left, 3 bottom right.
+function paintBezels(cards, size, w, h, pxPerMm, strength = 0.5) {
   const gray = new Uint8ClampedArray(w * h).fill(170);
-  const M = CARD.marker, i = size.inset;
-  const spots = [[i, i], [i, size.h - i - M], [size.w - i - M, size.h - i - M], [size.w - i - M, i]];
-  for (const { name, cx, cy, angle } of cards) {
+  const M = CARD.marker, i = size.inset, mark = MARKERS[REG_MARK];
+  const spots = [[i, i, false], [size.w - i - M, i, false], [i, size.h - i - M, true], [size.w - i - M, size.h - i - M, true]];
+  const ink = 28 + Math.round(strength * 172), stepA = 2 * Math.PI / BEZEL.ticks;
+  for (const { name, cx, cy, angle, hide = [] } of cards) {
+    const code = BEZEL_CODES[name];
     const a = angle * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
-    const marks = spots.map(([mx, my], k) => [mx, my, MARKERS[CORNER_MARKS[+CARD_CORNERS[name][k] - 1]]]);
     const half = Math.hypot(size.w, size.h) / 2 * pxPerMm;
     for (let y = Math.max(0, Math.floor(cy - half)); y < Math.min(h, cy + half); y++) {
       for (let x = Math.max(0, Math.floor(cx - half)); x < Math.min(w, cx + half); x++) {
@@ -76,10 +80,22 @@ function paintCorners(cards, size, w, h, pxPerMm) {
         const u = dx * cos + dy * sin + size.w / 2, v = -dx * sin + dy * cos + size.h / 2;
         if (u < 0 || v < 0 || u > size.w || v > size.h) continue;
         let value = 28;
-        for (const [mx, my, bits] of marks) {
-          const c = Math.floor(u - mx), r = Math.floor(v - my);
-          if (c < 0 || r < 0 || c > 7 || r > 7) continue;
-          if (r === 0 || r === 7 || c === 0 || c === 7 || bits[(r - 1) * 6 + c - 1] === '1') value = 200;
+        spots.forEach(([mx, my, flip], k) => {
+          if (hide.includes(k)) return;
+          let c = Math.floor(u - mx), r = Math.floor(v - my);
+          if (c < 0 || r < 0 || c > 7 || r > 7) return;
+          if (flip) { c = 7 - c; r = 7 - r; }
+          if (r === 0 || r === 7 || c === 0 || c === 7 || mark[(r - 1) * 6 + c - 1] === '1') value = 200;
+        });
+        const ru = u - size.w / 2, rv = v - size.h / 2, rad = Math.hypot(ru, rv);
+        if (Math.abs(rad - BEZEL.circle) <= 0.25) value = 200;
+        else if (Math.abs(rad - BEZEL.ring) <= 0.125) value = ink;
+        else if (rad >= BEZEL.long && rad <= BEZEL.ring) {
+          let t = Math.atan2(ru, -rv);
+          if (t < 0) t += 2 * Math.PI;
+          const k = Math.round(t / stepA) % BEZEL.ticks;
+          const off = Math.abs(((t - k * stepA + Math.PI) % (2 * Math.PI)) - Math.PI) * rad;
+          if (off <= BEZEL.width / 2 && rad >= (code[k] === '1' ? BEZEL.long : BEZEL.short)) value = ink;
         }
         gray[y * w + x] = value;
       }
@@ -88,46 +104,59 @@ function paintCorners(cards, size, w, h, pxPerMm) {
   return { gray, w, h };
 }
 
-for (const size of CORNER_SIZES) {
-  test(`reads every card of the corner layout on ${size.name} cards, in rows`, () => {
-    const P = 5.5, names = Object.keys(CARD_MARKERS), gap = 4;
-    const layout = [names.slice(0, 5), names.slice(5, 9), names.slice(9, 14), names.slice(14, 18), names.slice(18)];
-    const cards = [];
-    layout.forEach((row, r) => row.forEach((name, c) => cards.push({
-      name, cx: (20 + c * (size.w + gap) + size.w / 2) * P, cy: (20 + r * (size.h + 12) + size.h / 2) * P,
-      angle: (r * 7 + c * 13) % 9 - 4 + ((r + c) % 3 === 0 ? 180 : 0),
-    })));
-    const img = paintCorners(cards, size, Math.round((40 + 5 * size.w + 4 * gap) * P), Math.round((40 + 5 * size.h + 48) * P), P);
-    const res = readLayout(img);
-    const nameOf = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
-    assert.deepEqual(res.rows.map(row => row.map(c => nameOf[c.id])), layout);
+const NAME_OF = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
+const NAMES = Object.keys(CARD_MARKERS);
+const LAYOUT = [NAMES.slice(0, 5), NAMES.slice(5, 9), NAMES.slice(9, 14), NAMES.slice(14, 18), NAMES.slice(18)];
+
+function table(size, P, gap, angleOf, strength) {
+  const cards = [];
+  LAYOUT.forEach((row, r) => row.forEach((name, c) => cards.push({
+    name, cx: (20 + c * (size.w + gap) + size.w / 2) * P, cy: (20 + r * (size.h + 12) + size.h / 2) * P, angle: angleOf(r, c),
+  })));
+  return paintBezels(cards, size, Math.round((40 + 5 * size.w + 4 * gap) * P), Math.round((40 + 5 * size.h + 48) * P), P, strength);
+}
+
+for (const size of CARD_SIZES) {
+  test(`reads every card of the bezel layout on ${size.name} cards, in rows, some lying the other way up`, () => {
+    const res = readLayout(table(size, 5.5, 4, (r, c) => (r * 7 + c * 13) % 9 - 4 + ((r + c) % 3 === 0 ? 180 : 0), 0.5));
+    assert.deepEqual(res.rows.map(row => row.map(c => NAME_OF[c.id])), LAYOUT);
     assert.deepEqual(res.doubles, []);
+    assert.equal(res.unread.length, 0);
+  });
+
+  // The hardest spacing: cards all facing the same way, with gaps just wide enough that
+  // one card's right-hand marks and the next card's left-hand marks line up exactly
+  // like the corners of a card lying between them.
+  test(`isn't fooled by marks of neighbouring ${size.name} cards lining up like a card between them`, () => {
+    const gap = size.w - 4 * size.inset - 2 * CARD.marker;
+    const res = readLayout(table(size, 5.5, gap, () => 0, 0.5));
+    assert.deepEqual(res.rows.map(row => row.map(c => NAME_OF[c.id])), LAYOUT);
+    assert.deepEqual(res.doubles, []);
+    assert.equal(res.unread.length, 0);
   });
 }
 
-// The hardest spacing: two cards facing the same way, with a gap just wide enough
-// that the left card's right-hand marks and the right card's left-hand marks line up
-// exactly like the corners of a card lying between them. The marks are built directly
-// and listed with those four first, so the phantom is the first card the reader can
-// form. Every pair of cards, at both sizes.
-test("isn't fooled by marks of neighbouring cards lining up like a card between them", () => {
-  const names = Object.keys(CARD_MARKERS), nameOf = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
-  const P = 6, M = CARD.marker, fooled = [];
-  for (const size of CORNER_SIZES) {
-    const i = size.inset, gap = size.w - 4 * i - 2 * M;
-    const spots = [[i, i], [i, size.h - i - M], [size.w - i - M, size.h - i - M], [size.w - i - M, i]];
-    for (const a of names) for (const b of names) {
-      if (a === b) continue;
-      const marks = [];
-      [a, b].forEach((name, c) => spots.forEach(([mx, my], k) => {
-        const x = (c * (size.w + gap) + mx) * P, y = my * P, s = M * P;
-        const first = (c === 0 && k >= 2) || (c === 1 && k <= 1);
-        marks.push({ first, id: CORNER_MARKS[+CARD_CORNERS[name][k] - 1], centre: [x + s / 2, y + s / 2], corners: [[x, y], [x + s, y], [x + s, y + s], [x, y + s]] });
-      }));
-      marks.sort((p, q) => q.first - p.first);
-      const got = cardsFromCorners(marks, size).cards.map(c => nameOf[c.id]).sort();
-      if (got.join() !== [a, b].sort().join()) fooled.push(`${size.name}: ${a} + ${b} read as ${got.join(' + ') || 'nothing'}`);
-    }
+test('reads the ring when its ticks are faint', () => {
+  const res = readLayout(table(CARD_SIZES[1], 6, 6, (r, c) => (r + c) % 2 ? 3 : -2, 0.22));
+  assert.deepEqual(res.rows.map(row => row.map(c => NAME_OF[c.id])), LAYOUT);
+  assert.ok(Math.max(...res.cards.map(c => c.errors)) <= 6, `up to ${Math.max(...res.cards.map(c => c.errors))} ticks misread`);
+});
+
+test('reads a card from the two marks down one side, placing it by its circle', () => {
+  const size = CARD_SIZES[1], P = 6;
+  for (const hide of [[1, 3], [0, 2], [2, 3], [0, 1]]) {
+    const img = paintBezels([{ name: 'Rope', cx: 60 * P, cy: 70 * P, angle: 5, hide }], size, Math.round(120 * P), Math.round(140 * P), P);
+    const res = readLayout(img);
+    assert.deepEqual(res.cards.map(c => NAME_OF[c.id]), ['Rope'], `hiding corners ${hide}`);
+    assert.equal(res.cards[0].markers, 2);
+    assert.ok(Math.hypot(res.cards[0].centre[0] - 60 * P, res.cards[0].centre[1] - 70 * P) < 1.5 * P, 'centre within 1.5 mm');
   }
-  assert.deepEqual(fooled, []);
+});
+
+test('plain noise holds no cards', () => {
+  const w = 600, h = 500, gray = new Uint8ClampedArray(w * h);
+  let s = 777;
+  for (let i = 0; i < gray.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; gray[i] = (s >> 8) & 255; }
+  const res = readLayout({ gray, w, h });
+  assert.equal(res.cards.length + res.unread.length, 0);
 });

@@ -16,7 +16,7 @@ from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_sheet import CARD_MARKERS, CARD_CORNERS, US_GAME, card_back  # noqa: E402
+from test_sheet import CARD_MARKERS, BEZEL_CODES, US_GAME, card_back  # noqa: E402
 
 DPI = 600
 TRIM_W, TRIM_H = US_GAME['w'], US_GAME['h']
@@ -40,7 +40,7 @@ def backs(out):
         pdf = pathlib.Path(tmp) / 'backs.pdf'
         c = canvas.Canvas(str(pdf), pagesize=(TRIM_W + 2 * BLEED, TRIM_H + 2 * BLEED))
         for name in names:
-            card_back(c, BLEED, BLEED, CARD_MARKERS[name], CARD_CORNERS[name], w=TRIM_W, h=TRIM_H, bleed=BLEED,
+            card_back(c, BLEED, BLEED, CARD_MARKERS[name], BEZEL_CODES[name], w=TRIM_W, h=TRIM_H, bleed=BLEED,
                       inset=US_GAME['inset'], frame=US_GAME['frame'])
             c.showPage()
         c.save()

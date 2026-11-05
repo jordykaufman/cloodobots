@@ -6,15 +6,17 @@ no code looks like itself turned, so a reader can tell which way up a card lies 
 a few misread squares can't turn one card into another. Re-running gives the same
 codes (the random seed is fixed).
 
-The four corner marks must also give nothing away to a person: no shapes, no mirror
-symmetry and no heavier side, so nobody can see which way up a card lies. And the
-cards' corner orders are spread so that no single corner hints at a card's type.
+The bezel layout's corner mark must also give nothing away to a person: no shapes, no
+mirror symmetry and no heavier side, so nobody can see which way up a card lies. And
+its card codes are rings of 72 ticks, long or short, any two rings differing in at
+least BEZEL_APART ticks even when one card lies the other way up.
 """
-import itertools, json, math, random, pathlib
-from collections import Counter
+import json, random, pathlib
 
 N_CODES = 34        # 0 = decoy, 1-21 = cards, 22-33 = sizes on the test sheet
-N_CORNER = 4        # 34-37 = corner marks 1-4
+N_CORNER = 1        # 34 = the mark in every corner of the bezel layout
+BEZEL_TICKS = 72
+BEZEL_APART = 24
 MIN_APART = 10
 MIN_SELF = 8
 random.seed(20261103)
@@ -40,7 +42,7 @@ while len(codes) < N_CODES:
     codes.append(c)
 
 
-# Corner marks that look like noise. A mark gives away which way up it is when it
+# A corner mark that looks like noise. A mark gives away which way up it is when it
 # looks like a thing: a big joined-up patch of either colour makes a shape, mirror
 # symmetry reads as an upright object, and a heavier half looks like a base.
 def flips(b):
@@ -80,38 +82,21 @@ while len(codes) < N_CODES + N_CORNER:
 DECK = ['Scarlet', 'Mustard', 'White', 'Green', 'Peacock', 'Plum',
         'Candlestick', 'Dagger', 'Lead Pipe', 'Pistol', 'Rope', 'Wrench',
         'Bathroom', 'Bedroom', 'Courtyard', 'Dining Room', 'Game Room', 'Garage', 'Kitchen', 'Living Room', 'Office']
-TYPES = ['suspect'] * 6 + ['weapon'] * 6 + ['room'] * 9
 
-
-# The cards' corner orders: 21 of the 24 ways to put marks 1-4 in the four corners,
-# shared out so that within each type every corner holds each mark about equally
-# often. Then no corner on its own says anything about a card's type.
-def type_info(seen):
-    """How much what's seen tells about the type (mutual information, in bits)."""
-    pairs = list(zip(TYPES, seen))
-    n, joint, a, b = len(pairs), Counter(pairs), Counter(TYPES), Counter(seen)
-    return sum(k / n * math.log2(k * n / (a[t] * b[s])) for (t, s), k in joint.items())
-
-def leak(orders):
-    single = [type_info([o[k] for o in orders]) for k in range(4)]
-    pairs = [type_info([(o[j], o[k]) for o in orders]) for j, k in itertools.combinations(range(4), 2)]
-    return 10 * max(single) + sum(single) + 0.2 * sum(pairs)
-
-rng = random.Random(20261105)
-orders = list(itertools.permutations([1, 2, 3, 4]))
-rng.shuffle(orders)
-cur, spare, best = orders[:len(DECK)], orders[len(DECK):], None
-best = leak(cur)
-for _ in range(40000):
-    new, sp = cur[:], spare[:]
-    if rng.random() < 0.7:
-        i, j = rng.sample(range(len(new)), 2); new[i], new[j] = new[j], new[i]
-    else:
-        i, j = rng.randrange(len(new)), rng.randrange(len(sp)); new[i], sp[j] = sp[j], new[i]
-    score = leak(new)
-    if score <= best:
-        cur, spare, best = new, sp, score
-PERMS = cur
+# The bezel codes: 72 ticks, about half of them long on every card so the rings all
+# look equally busy, and any two rings at least BEZEL_APART ticks apart however the
+# cards lie (a card the other way up shows its ring turned by 36 ticks).
+rng = random.Random(20261106)
+half = BEZEL_TICKS // 2
+turn_ring = lambda c: c[half:] + c[:half]
+rings = []
+while len(rings) < len(DECK):
+    c = tuple(rng.randint(0, 1) for _ in range(BEZEL_TICKS))
+    if not 32 <= sum(c) <= 40 or apart(c, turn_ring(c)) < BEZEL_APART:
+        continue
+    if any(apart(c, o) < BEZEL_APART or apart(c, turn_ring(o)) < BEZEL_APART for o in rings):
+        continue
+    rings.append(c)
 root = pathlib.Path(__file__).resolve().parent.parent
 js = f"""// Card-back markers, made by tools/make_markers.py. Don't edit by hand.
 // Each is 36 squares (6 rows of 6, top row first; 1 = ink) inside a solid ring.
@@ -125,18 +110,21 @@ export const DECOY = 0;
 // rooms only. Markers 22-33 are only used on the size test page.
 export const CARD_MARKERS = {json.dumps({name: i + 1 for i, name in enumerate(DECK)}, indent=2)};
 
-// The corner-mark layout: every card carries the same four marks, standing for 1 to 4,
-// one in each corner, and the card is told apart by which corner holds which. These
-// are the markers for marks 1, 2, 3 and 4, chosen to look like noise so a person
-// can't see which way up a card lies.
-export const CORNER_MARKS = [34, 35, 36, 37];
+// The bezel layout: every card carries this one mark in each corner, the bottom two
+// turned round, so the back is the same picture either way up. It only tells the
+// camera where the card lies; it's chosen to look like noise so a person can't see
+// which way up the card is.
+export const REG_MARK = 34;
 
-// Each card's corners, read from the top-left corner going counterclockwise (top left,
-// bottom left, bottom right, top right). "2413" puts mark 2 top left, 4 bottom left,
-// 1 bottom right and 3 top right. The marks all face the card's top, which is how the
-// reader knows where to start. The orders are shared out so that no single corner
-// hints at whether a card is a suspect, weapon or room.
-export const CARD_CORNERS = {json.dumps({name: ''.join(map(str, p)) for name, p in zip(DECK, PERMS)}, indent=2)};
+// The card's code is the ring of graduations round the compass rose: a tick every 5
+// degrees, clockwise from the card's top, each long or short. Sizes in millimetres
+// from the card's centre: the brass circle, the faint ring the ticks hang from, and
+// where short and long ticks end; `width` is a tick's thickness.
+export const BEZEL = {json.dumps({'ticks': BEZEL_TICKS, 'circle': 16, 'ring': 14.6, 'short': 13.4, 'long': 12.3, 'width': 0.3})};
+
+// Each card's ring, tick 0 first; 1 is a long tick. Any two rings differ in at least
+// {BEZEL_APART} ticks, even against a ring turned by 36 (a card the other way up).
+export const BEZEL_CODES = {json.dumps({name: ''.join(map(str, r)) for name, r in zip(DECK, rings)}, indent=2)};
 """
 (root / 'js' / 'markers.js').write_text(js)
 print(len(codes), 'codes; closest pair differs in',

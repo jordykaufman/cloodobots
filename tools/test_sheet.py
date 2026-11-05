@@ -13,8 +13,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 src = (ROOT / 'js' / 'markers.js').read_text()
 MARKERS = json.loads(re.search(r'MARKERS = (\[.*?\]);', src, re.S).group(1))
 CARD_MARKERS = json.loads(re.search(r'CARD_MARKERS = (\{.*?\});', src, re.S).group(1))
-CORNER_MARKS = json.loads(re.search(r'CORNER_MARKS = (\[.*?\]);', src, re.S).group(1))
-CARD_CORNERS = json.loads(re.search(r'CARD_CORNERS = (\{.*?\});', src, re.S).group(1))
+REG_MARK = int(re.search(r'REG_MARK = (\d+);', src).group(1))
+BEZEL = json.loads(re.search(r'BEZEL = (\{.*?\});', src, re.S).group(1))
+BEZEL_CODES = json.loads(re.search(r'BEZEL_CODES = (\{.*?\});', src, re.S).group(1))
 DECOY = 0
 
 NAVY = HexColor('#141B2A')
@@ -25,6 +26,7 @@ CARD_W, CARD_H, RADIUS = 63 * mm, 88 * mm, 3 * mm
 MARKER = 8 * mm          # the marker's ring and squares; one more square of clear space surrounds it
 MARKER_INSET = 5.5 * mm  # from the card's edge to the marker
 FRAME = (2.5 * mm, 3.75 * mm)  # the two brass frame lines, in from the card's edge
+BEZEL_STRENGTH = 0.4           # the bezel's ticks against the brass: 1 would be as bold as the circle
 
 # The deck from MakePlayingCards in their US game size, the size of real Clue cards.
 # It's narrower, so the marks sit a little closer to the edge, and the frame moves in
@@ -65,10 +67,14 @@ def lattice(c, x, y, w, h):
     c.setStrokeAlpha(1)
 
 
-def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0, inset=MARKER_INSET, frame=FRAME):
+def card_back(c, x, y, code, bezel=None, w=CARD_W, h=CARD_H, bleed=0, inset=MARKER_INSET, frame=FRAME):
     """A card back w by h with its bottom-left corner at (x, y): the marks `inset` in
     from the edges and the frame lines at the distances in `frame`. With `bleed`, the
-    background runs that far past the cut line, as print services need."""
+    background runs that far past the cut line, as print services need.
+
+    With `bezel` (the card's ring of ticks, a string of 72 digits) it's the bezel
+    layout: the same mark in every corner and the code in the ring round the compass
+    rose. Without, the single-code layout: the card's marker in two corners."""
     if bleed:
         c.setFillColor(NAVY)
         c.rect(x - bleed, y - bleed, w + 2 * bleed, h + 2 * bleed, stroke=0, fill=1)
@@ -84,22 +90,29 @@ def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0, inset=MA
         c.restoreState()
 
     c.setStrokeColor(BRASS)
-    c.setLineWidth(0.4 * mm)
-    f = frame[0]
-    c.roundRect(x + f, y + f, w - 2 * f, h - 2 * f, 2 * mm, stroke=1, fill=0)
-    c.setStrokeAlpha(0.45)
-    c.setLineWidth(0.25 * mm)
-    f = frame[1]
-    c.roundRect(x + f, y + f, w - 2 * f, h - 2 * f, 1.25 * mm, stroke=1, fill=0)
+    for f, lw, alpha, rad in ((frame[0], 0.4, 1, 2), (frame[1], 0.25, 0.45, 1.25)):
+        c.setStrokeAlpha(alpha)
+        c.setLineWidth(lw * mm)
+        c.roundRect(x + f, y + f, w - 2 * f, h - 2 * f, rad * mm, stroke=1, fill=0)
     c.setStrokeAlpha(1)
 
     cx, cy = x + w / 2, y + h / 2
     c.setFillColor(NAVY)
     c.setLineWidth(0.5 * mm)
-    c.circle(cx, cy, 16 * mm, stroke=1, fill=1)
-    if corners:
-        # A compass rose, which looks the same whichever way up the card lies, so the
-        # back gives no hint of where the corner order starts.
+    c.circle(cx, cy, BEZEL['circle'] * mm, stroke=1, fill=1)
+    if bezel:
+        # The bezel: a faint ring with a tick every 5 degrees, clockwise from the card's
+        # top, long or short by the code.
+        c.setStrokeAlpha(BEZEL_STRENGTH)
+        c.setLineWidth(0.25 * mm)
+        c.circle(cx, cy, BEZEL['ring'] * mm, stroke=1, fill=0)
+        c.setLineWidth(BEZEL['width'] * mm)
+        for i, bit in enumerate(bezel):
+            a = math.pi / 2 - i * 2 * math.pi / BEZEL['ticks']
+            r0, r1 = BEZEL['ring'] * mm, (BEZEL['long'] if bit == '1' else BEZEL['short']) * mm
+            c.line(cx + r0 * math.cos(a), cy + r0 * math.sin(a), cx + r1 * math.cos(a), cy + r1 * math.sin(a))
+        c.setStrokeAlpha(1)
+        # A compass rose, which looks the same whichever way up the card lies.
         pts = []
         for i in range(16):
             a = math.pi / 2 + i * math.pi / 8
@@ -125,11 +138,13 @@ def card_back(c, x, y, code, corners=None, w=CARD_W, h=CARD_H, bleed=0, inset=MA
 
     left, right = x + inset, x + w - inset - MARKER
     top, bottom = y + h - inset, y + inset + MARKER
-    if corners:
-        # Corner layout: marks 1-4 placed by the card's order, read counterclockwise
-        # from the top left, all facing the card's top.
-        for (mx, my), n in zip([(left, top), (left, bottom), (right, bottom), (right, top)], corners):
-            marker(c, mx, my, MARKER, MARKERS[CORNER_MARKS[int(n) - 1]])
+    if bezel:
+        # The same mark in every corner, the bottom two turned round, so the back is
+        # the same picture either way up.
+        marker(c, left, top, MARKER, MARKERS[REG_MARK])
+        marker(c, right, top, MARKER, MARKERS[REG_MARK])
+        marker(c, left, bottom, MARKER, MARKERS[REG_MARK], upside_down=True)
+        marker(c, right, bottom, MARKER, MARKERS[REG_MARK], upside_down=True)
         return
     # Single-code layout: the card's code top-left and bottom-right (turned, so the back
     # reads the same either way up); the decoy in the other two corners.
@@ -197,10 +212,10 @@ def lines(c, x, y, items, size=10.5, gap=5.6 * mm, numbered=False, width=170 * m
     return y
 
 
-def page_one(c, pages, corner_layout=False):
+def page_one(c, pages, bezel=False):
     W, H = A4
-    if corner_layout:
-        heading(c, 'Card back test sheet: corner marks', 'Cluedo Robot Players: 21 card backs, each with the same four corner marks in its own order.', H - 24 * mm)
+    if bezel:
+        heading(c, 'Card back test sheet: bezel', 'Cluedo Robot Players: 21 card backs with the same mark in every corner; the ring round the compass is the code.', H - 24 * mm)
     else:
         heading(c, 'Card back test sheet', 'Cluedo Robot Players: 21 card backs with corner markers, and a marker size test.', H - 24 * mm)
     c.setFillColor(INK)
@@ -208,17 +223,17 @@ def page_one(c, pages, corner_layout=False):
     c.drawString(18 * mm, H - 46 * mm, 'Printing')
     c.setFillColor(INK)
     y = lines(c, 18 * mm, H - 54 * mm, [
-        ('Print pages 2 to 4' if corner_layout else 'Print pages 2 to 5') + ' at actual size: 100%, with "fit to page" turned off.',
+        ('Print pages 2 to 4' if bezel else 'Print pages 2 to 5') + ' at actual size: 100%, with "fit to page" turned off.',
         'Check the bar at the bottom of this page measures exactly 100 mm. If it doesn’t, the cards are the wrong size.',
         'Laminate the sheets. Cut out the cards on pages 2 to 4 along their edges.',
-        'Write each card’s name, printed under it, on its blank front.' + ('' if corner_layout else ' Keep page 5 in one piece.'),
+        'Write each card’s name, printed under it, on its blank front.' + ('' if bezel else ' Keep page 5 in one piece.'),
     ], numbered=True)
     c.setFont('Helvetica-Bold', 12)
     c.drawString(18 * mm, y - 6 * mm, 'Taking the test photo')
     y = lines(c, 18 * mm, y - 14 * mm, [
         'Lay the cards face-down in rows: one row per player, and one for the envelope. Leave a finger’s width between cards and a wider gap between rows.',
         'Hold the phone about 40 cm above the cards, tilted a little away from straight down so the ceiling light’s reflection misses them. No flash.',
-    ] + ([] if corner_layout else ['Photograph page 5 as well. The app will say which marker sizes and shades it could read.']), numbered=True)
+    ] + ([] if bezel else ['Photograph page 5 as well. The app will say which marker sizes and shades it could read.']), numbered=True)
     c.setFont('Helvetica-Bold', 12)
     c.drawString(18 * mm, y - 6 * mm, 'Where each card is')
     y -= 14 * mm
@@ -233,8 +248,8 @@ def page_one(c, pages, corner_layout=False):
         y -= max(1, len(rows)) * 5 * mm + 3 * mm
     c.setFillColor(MUTED)
     lines(c, 18 * mm, y - 4 * mm, [
-        ('Every card carries the same four 8 mm marks, standing for 1 to 4, one in each corner. Which corner holds which number tells the cards apart. The marks all face the card’s top, so the reader knows where to start.'
-         if corner_layout else 'Each card carries its code in two corners, 8 mm across: top left, and bottom right turned upside down. The other two corners hold a decoy that is the same on every card.'),
+        ('Every card carries the same 8 mm mark in each corner, which only tells the camera where the card lies. The code is the ring of graduations round the compass: a tick every 5 degrees, each long or short. Any two cards differ in at least 24 ticks.'
+         if bezel else 'Each card carries its code in two corners, 8 mm across: top left, and bottom right turned upside down. The other two corners hold a decoy that is the same on every card.'),
     ], size=9.5)
 
     # The 100 mm check.
@@ -253,7 +268,7 @@ def page_one(c, pages, corner_layout=False):
     c.drawString(x0 + 104 * mm, yb - 1, 'This bar should measure 100 mm.')
 
 
-def card_pages(c, names, corner_layout=False, fronts=False, size=TEST_SHEET):
+def card_pages(c, names, bezel=False, fronts=False, size=TEST_SHEET):
     """A page of card backs, or with `fronts` the page to print on its other side:
     the same cards with columns swapped, because turning the sheet over on its long
     edge swaps left and right."""
@@ -273,7 +288,7 @@ def card_pages(c, names, corner_layout=False, fronts=False, size=TEST_SHEET):
             continue
         x = left + col * (w + gap_x)
         y = top - (r + 1) * h - r * gap_y
-        card_back(c, x, y, CARD_MARKERS[name], CARD_CORNERS[name] if corner_layout else None,
+        card_back(c, x, y, CARD_MARKERS[name], BEZEL_CODES[name] if bezel else None,
                   w=w, h=h, inset=size['inset'], frame=size['frame'])
         c.setFillColor(MUTED)
         c.setFont('Helvetica', 7)
@@ -309,25 +324,25 @@ def size_page(c):
             code += 1
 
 
-def build(out, corner_layout):
+def build(out, bezel):
     order = list(CARD_MARKERS)
     pages = [(n + 2, order[i:i + 9]) for n, i in enumerate(range(0, len(order), 9))]
     c = canvas.Canvas(str(out), pagesize=A4)
-    c.setTitle('Card back test sheet' + (': corner marks' if corner_layout else ''))
+    c.setTitle('Card back test sheet' + (': bezel' if bezel else ''))
     c.setAuthor('Cluedo Robot Players')
-    page_one(c, pages, corner_layout)
+    page_one(c, pages, bezel)
     c.showPage()
     for _, names in pages:
-        card_pages(c, names, corner_layout)
+        card_pages(c, names, bezel)
         c.showPage()
-    if not corner_layout:
+    if not bezel:
         size_page(c)
         c.showPage()
     c.save()
     print('wrote', out)
 
 
-def build_double_sided(out, size=TEST_SHEET, title='Card back test sheet: corner marks, double-sided'):
+def build_double_sided(out, size=TEST_SHEET, title='Card back test sheet: bezel, double-sided'):
     """Just the card pages, each followed by its fronts, for printing double-sided."""
     order = list(CARD_MARKERS)
     c = canvas.Canvas(str(out), pagesize=A4)
@@ -345,7 +360,6 @@ def build_double_sided(out, size=TEST_SHEET, title='Card back test sheet: corner
 
 if __name__ == '__main__':
     build(ROOT / 'print' / 'card-back-test-sheet.pdf', False)
-    build(ROOT / 'print' / 'card-back-test-sheet-corners.pdf', True)
-    build_double_sided(ROOT / 'print' / 'card-back-test-sheet-corners-double-sided.pdf')
-    build_double_sided(ROOT / 'print' / 'card-back-test-sheet-us-game-double-sided.pdf', US_GAME,
-                       'Card back test sheet: US game size, double-sided')
+    build(ROOT / 'print' / 'card-back-test-sheet-bezel.pdf', True)
+    build_double_sided(ROOT / 'print' / 'card-back-test-sheet-bezel-us-game-double-sided.pdf', US_GAME,
+                       'Card back test sheet: bezel, US game size, double-sided')
