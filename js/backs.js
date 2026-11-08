@@ -430,8 +430,8 @@ function nameRing(bits) {
 // round, which is the same picture), so each mark guesses the card's centre twice.
 // The marks of one card agree on a spot, and there is a brass circle round it. Returns
 // cards { id, centre, axis, mm, markers, ring, contrast, errors }, `unread`: cards
-// whose ring matched no code, and `loose`: marks that fit no card. `size` is one of
-// CARD_SIZES.
+// whose ring matched no code, and `loose`: marks that fit no card { centre, mm, whole }.
+// `size` is one of CARD_SIZES.
 export function cardsFromBezels(markers, img, size = CARD_SIZES[0]) {
   const to = toCentre(size);
   const marks = markers.filter(m => m.id === REG_MARK).map(m => {
@@ -485,7 +485,31 @@ export function cardsFromBezels(markers, img, size = CARD_SIZES[0]) {
     const named = nameRing(bits);
     if (named) cards.push({ id: named.id, errors: named.dist, ...card }); else unread.push(card);
   }
-  const loose = marks.filter((_, i) => !taken.has(i)).map(k => ({ centre: k.centre, mm: k.s }));
+  // Marks that fit no card. `whole` says the mark is one of at least three that agree on
+  // a card lying wholly in the picture, but no card could be read there: glare can wash
+  // out a card's circle and leave its corners. Marks of a card cut off by the edge of
+  // the picture don't count.
+  const free = marks.map((_, i) => i).filter(i => !taken.has(i));
+  const inside = ([x, y]) => x >= 0 && y >= 0 && x <= img.w && y <= img.h;
+  const hidden = new Set();
+  for (const g of guesses) {
+    if (taken.has(g.i) || hidden.has(g.i)) continue;
+    const members = new Set([g.i]), corners = new Set([g.slot]);
+    for (const h of guesses) {
+      if (taken.has(h.i) || members.has(h.i) || Math.hypot(h.x - g.x, h.y - g.y) > 7 * g.k.s) continue;
+      const dot = h.k.facing[0] * g.k.facing[0] + h.k.facing[1] * g.k.facing[1];
+      if (Math.abs(dot) < 0.85) continue;
+      const corner = dot > 0 ? h.slot : 2 + h.slot;
+      if (corners.has(corner)) continue;
+      members.add(h.i);
+      corners.add(corner);
+    }
+    if (members.size < 3) continue;
+    const k = g.k, half = [k.right.map(v => v * size.w / 2), k.down.map(v => v * size.h / 2)];
+    const whole = [[-1, -1], [1, -1], [1, 1], [-1, 1]].every(([a, b]) => inside([g.x + a * half[0][0] + b * half[1][0], g.y + a * half[0][1] + b * half[1][1]]));
+    if (whole) members.forEach(i => hidden.add(i));
+  }
+  const loose = free.map(i => ({ centre: marks[i].centre, mm: marks[i].s, whole: hidden.has(i) }));
   return { cards, unread, loose };
 }
 

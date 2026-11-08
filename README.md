@@ -31,7 +31,7 @@ A static site with no build step. Plain ES modules, plus three libraries loaded 
 | `js/scan.js`, `js/vision.js`, `js/match.js` | Camera, finding and straightening the card, reading and matching its name. The scanner reads only small boxes near the bottom of the card where the name is printed, because the picture beside the name confuses the text reader. |
 | `cards/clue2013/` | Photos of the 2013 Clue cards, 420 pixels wide. |
 | `js/backs.js`, `js/markers.js` | Reads printed card backs from one photo of cards laid face-down: finds the corner marks, fits each card's circle and reads the ring of ticks round it, then groups the cards into rows. |
-| `card-test.html` | Try the card back reader with a photo of the printed test sheet. Its save button hands the photo on, to Google Drive or a message, so the reader can be tuned on real photos. |
+| `card-test.html`, `js/card-test.js`, `js/live-scan.js`, `js/backs-worker.js` | Try the card back reader on printed cards. Scan live: hold the phone over the cards and it reads every camera frame (in a worker, so the view stays smooth), draws a circle and name on each card as it reads it, and chimes when the same cards have read the same way three times in a row with none it couldn't read. Or read one photo. A tally counts every card seen across scans, and the save button hands the picture on, to Google Drive or a message, so the reader can be tuned on real photos. |
 | `tools/` | `make_markers.py` makes the marker codes; `test_sheet.py` draws `print/card-back-test-sheet.pdf`; `print_cards.py` makes print files for a deck from MakePlayingCards. |
 
 The camera needs HTTPS (or `localhost`), so serve the folder from somewhere like GitHub Pages.

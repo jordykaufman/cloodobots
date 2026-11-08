@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findMarkers, readLayout, CARD, CARD_SIZES } from '../js/backs.js';
-import { MARKERS, DECOY, CARD_MARKERS, REG_MARK, BEZEL, BEZEL_CODES } from '../js/markers.js';
+import { MARKERS, DECOY, CARD_MARKERS } from '../js/markers.js';
+import { paintBezels } from './paint.mjs';
 
 // Paints card backs into a grayscale image: a dark card with its code top left and,
 // turned round, bottom right, and the decoy in the other corners. Each card can be
@@ -60,50 +61,6 @@ test('plain noise is never read as a card', () => {
   assert.equal(findMarkers({ gray, w, h }).length, 0);
 });
 
-// Paints bezel-layout card backs: the same mark in every corner (the bottom two turned
-// round), a brass circle round the centre, and the ring of long and short ticks that
-// is the card's code, drawn at `strength` (1 would be as bright as the circle). A
-// card's `hide` lists corner marks to leave out: 0 top left, 1 top right, 2 bottom
-// left, 3 bottom right.
-function paintBezels(cards, size, w, h, pxPerMm, strength = 0.5) {
-  const gray = new Uint8ClampedArray(w * h).fill(170);
-  const M = CARD.marker, i = size.inset, mark = MARKERS[REG_MARK];
-  const spots = [[i, i, false], [size.w - i - M, i, false], [i, size.h - i - M, true], [size.w - i - M, size.h - i - M, true]];
-  const ink = 28 + Math.round(strength * 172), stepA = 2 * Math.PI / BEZEL.ticks;
-  for (const { name, cx, cy, angle, hide = [] } of cards) {
-    const code = BEZEL_CODES[name];
-    const a = angle * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
-    const half = Math.hypot(size.w, size.h) / 2 * pxPerMm;
-    for (let y = Math.max(0, Math.floor(cy - half)); y < Math.min(h, cy + half); y++) {
-      for (let x = Math.max(0, Math.floor(cx - half)); x < Math.min(w, cx + half); x++) {
-        const dx = (x - cx) / pxPerMm, dy = (y - cy) / pxPerMm;
-        const u = dx * cos + dy * sin + size.w / 2, v = -dx * sin + dy * cos + size.h / 2;
-        if (u < 0 || v < 0 || u > size.w || v > size.h) continue;
-        let value = 28;
-        spots.forEach(([mx, my, flip], k) => {
-          if (hide.includes(k)) return;
-          let c = Math.floor(u - mx), r = Math.floor(v - my);
-          if (c < 0 || r < 0 || c > 7 || r > 7) return;
-          if (flip) { c = 7 - c; r = 7 - r; }
-          if (r === 0 || r === 7 || c === 0 || c === 7 || mark[(r - 1) * 6 + c - 1] === '1') value = 200;
-        });
-        const ru = u - size.w / 2, rv = v - size.h / 2, rad = Math.hypot(ru, rv);
-        if (Math.abs(rad - BEZEL.circle) <= 0.25) value = 200;
-        else if (Math.abs(rad - BEZEL.ring) <= 0.125) value = ink;
-        else if (rad >= BEZEL.long && rad <= BEZEL.ring) {
-          let t = Math.atan2(ru, -rv);
-          if (t < 0) t += 2 * Math.PI;
-          const k = Math.round(t / stepA) % BEZEL.ticks;
-          const off = Math.abs(((t - k * stepA + Math.PI) % (2 * Math.PI)) - Math.PI) * rad;
-          if (off <= BEZEL.width / 2 && rad >= (code[k] === '1' ? BEZEL.long : BEZEL.short)) value = ink;
-        }
-        gray[y * w + x] = value;
-      }
-    }
-  }
-  return { gray, w, h };
-}
-
 const NAME_OF = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
 const NAMES = Object.keys(CARD_MARKERS);
 const LAYOUT = [NAMES.slice(0, 5), NAMES.slice(5, 9), NAMES.slice(9, 14), NAMES.slice(14, 18), NAMES.slice(18)];
@@ -159,4 +116,20 @@ test('plain noise holds no cards', () => {
   for (let i = 0; i < gray.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; gray[i] = (s >> 8) & 255; }
   const res = readLayout({ gray, w, h });
   assert.equal(res.cards.length + res.unread.length, 0);
+});
+
+test('tells corner marks of a card cut off by the edge from marks of a card it couldn’t read', () => {
+  const size = CARD_SIZES[1], P = 6;
+  // A card whose circle is hidden, in the middle of the picture, and a card hanging off
+  // its right-hand edge, so only its left-hand marks are in the picture.
+  const img = paintBezels([{ name: 'Rope', cx: 70 * P, cy: 80 * P, angle: 0 }, { name: 'Plum', cx: 160 * P, cy: 80 * P, angle: 0 }], size, Math.round(175 * P), Math.round(160 * P), P);
+  for (let y = 0; y < img.h; y++) for (let x = 0; x < img.w; x++) {
+    if (Math.hypot(x - 70 * P, y - 80 * P) < 18 * P) img.gray[y * img.w + x] = 28;
+  }
+  const res = readLayout(img);
+  assert.equal(res.cards.length, 0);
+  const inView = res.loose.filter(m => m.whole), cutOff = res.loose.filter(m => !m.whole);
+  assert.equal(inView.length, 4);
+  assert.ok(inView.every(m => Math.abs(m.centre[0] - 70 * P) < 30 * P), 'the hidden card’s marks');
+  assert.ok(cutOff.length === 2 && cutOff.every(m => m.centre[0] > 130 * P), 'the cut-off card’s marks');
 });
