@@ -5,6 +5,8 @@ import { newState, dispatch, modelFor, HOST, nextName, tidyClaims, EDITIONS, clo
 import { draw, previewText, draftReady } from './views.js';
 import { hostLink, joinLink, newCode, cleanCode } from './net.js';
 import { cameraAvailable, startScanner, makeVoice } from './scan.js';
+import { openScanner, describeScan } from './scan-screen.js';
+import { CARD_MARKERS } from './markers.js';
 import { store, loadScript, keepAwake, lib } from './util.js';
 
 const QR_JS = 'https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js';
@@ -329,6 +331,33 @@ function scanStop() {
   R.scan = freshScan();
 }
 
+/* ---------- dealing by scanning the backs ---------- */
+// The host phone scans the rows of cards dealt face-down. The scanner ticks each card it
+// reads but never names one, and the rows go to the game as the scan pieced the table
+// together, for the host to say whose each row is.
+let rowScan = null;
+const MARKER_NAME = Object.fromEntries(Object.entries(CARD_MARKERS).map(([name, id]) => [id, name]));
+
+function scanRows() {
+  const g = R.state && R.state.game;
+  if (rowScan || !g) return;
+  const need = g.deck.length, byName = new Map(g.deck.map(c => [c.name, c.id]));
+  rowScan = openScanner(document.getElementById('live'), {
+    expected: need,
+    describe: v => describeScan(v, need, x => (x.count < need ? ` ${need - x.count} to go.` : '')),
+    onLock({ map }) {
+      rowScan = null;
+      R.ui.view.assign = null;
+      const groups = map.groups.map(gr => {
+        const at = new Map(gr.cards.map(c => [c.id, c]));
+        return { rows: gr.rows.map(row => row.map(id => ({ id: byName.get(MARKER_NAME[id]), centre: at.get(id).centre, axis: at.get(id).axis }))) };
+      });
+      act({ type: 'scanned', groups });
+    },
+    onCancel() { rowScan = null; },
+  });
+}
+
 /* ---------- buttons ---------- */
 const seatOf = d => R.M.seats.find(s => s.id === d.seat);
 const mineIn = () => R.M.mine.map(id => R.M.seats.find(s => s.id === id)).filter(s => s && !s.out);
@@ -413,7 +442,10 @@ const A = {
     render();
   },
   dealt() { act({ type: 'dealt' }); },
-  newGame() { scanStop(); R.ui.view = { name: 'setup' }; act({ type: 'newGame' }); },
+  scanRows() { scanRows(); },
+  rescanRows() { R.ui.view.assign = null; act({ type: 'rescan' }); scanRows(); },
+  assignRows() { act({ type: 'assign', to: [...document.querySelectorAll('[data-in=rowTo]')].map(el => el.value) }); },
+  newGame() { scanStop(); if (rowScan) rowScan.stop(); rowScan = null; R.ui.view = { name: 'setup' }; act({ type: 'newGame' }); },
 
   // hands
   enter(d) { R.ui.view = { name: 'enter', seat: d.seat, open: false }; },
@@ -534,6 +566,9 @@ $app.addEventListener('change', e => {
     R.state.setup[t.name] = t.value;
     if (t.name === 'phones') ensureLink();
     setupChanged();
+  } else if (k === 'rowTo') {
+    v.assign = [...document.querySelectorAll('[data-in=rowTo]')].map(el => el.value);
+    render();
   } else if (k === 'draft') {
     v.draft[t.dataset.key] = t.value;
     if (v.confirming) { v.confirming = false; render(); return; }

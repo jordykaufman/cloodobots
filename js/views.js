@@ -3,7 +3,8 @@
 // those cards were never sent to it.
 
 import { esc } from './util.js';
-import { CATS, CAT, CATS_PL, EDITIONS, dealCounts, cleanList } from './engine.js';
+import { CATS, CAT, CATS_PL, EDITIONS, dealCounts, cleanList, printedDeck } from './engine.js';
+import { UPDATED } from './version.js';
 
 let C; // the context for the screen being drawn
 
@@ -112,9 +113,10 @@ function viewSetup() {
       <button class="icon-btn" data-act="moveSeat" data-i="${i}" data-d="1"${i === n - 1 ? ' disabled' : ''} aria-label="Move ${esc(s.name)} down">↓</button>
       <button class="icon-btn" data-act="removeSeat" data-i="${i}"${n <= 2 ? ' disabled' : ''} aria-label="Remove ${esc(s.name)}">✕</button>
     </span></li>`;
-  const option = (name, value, title, desc) => `<label class="opt">
-    <input type="radio" name="${name}" id="${name}-${value}" value="${value}" data-in="setupOpt"${st[name] === value ? ' checked' : ''}>
-    <span class="opt-body"><span class="opt-title">${title}</span><span class="opt-desc">${desc}</span></span></label>`;
+  const option = (name, value, title, desc, off = '') => `<label class="opt${off ? ' opt--off' : ''}">
+    <input type="radio" name="${name}" id="${name}-${value}" value="${value}" data-in="setupOpt"${st[name] === value ? ' checked' : ''}${off && st[name] !== value ? ' disabled' : ''}>
+    <span class="opt-body"><span class="opt-title">${title}</span><span class="opt-desc">${desc}${off ? ` <strong>${off}</strong>` : ''}</span></span></label>`;
+  const backsOff = !printedDeck(st) ? 'Needs the printed deck: choose the Clue (2013) cards below.' : !C.cameraOK ? 'Needs this phone’s camera, which this browser won’t give the page.' : '';
   return `
   <header class="masthead">
     ${brand()}
@@ -143,6 +145,7 @@ function viewSetup() {
   <section class="panel">
     <h2 class="h2">Dealing</h2>
     <div class="options">
+      ${option('dealMode', 'backs', 'Real cards with the printed backs', 'Deal everyone real cards, robots and the envelope too, face-down in rows. This phone scans the backs, then you say whose each row is. Nobody sees a card.', backsOff)}
       ${option('dealMode', 'physical', 'We hold real cards', `Deal the people real cards as usual and tap them in. ${C.cameraOK ? 'This phone’s camera reads the envelope cards without anyone seeing them, so the app knows the real answer.' : 'The app picks the answer from the cards nobody holds.'}`)}
       ${option('dealMode', 'app', 'The app deals everyone', 'No paper cards. Everyone checks their hand in the app, and shows cards through it too.')}
     </div>
@@ -171,7 +174,8 @@ function viewSetup() {
     <p class="preview" id="preview">${previewText(st)}</p>
     <p class="error" id="setupError" role="alert"></p>
     <button class="btn btn--primary btn--big" data-act="start">Start the game</button>
-  </div>`;
+  </div>
+  <p class="hint">This version of the app: ${esc(new Date(UPDATED).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}.</p>`;
 }
 
 /* ---------- joining (other phones) ---------- */
@@ -222,6 +226,7 @@ function viewWaitHost() {
 /* ---------- dealing ---------- */
 function viewDeal() {
   const g = C.M.game;
+  if (g.dealMode === 'backs') return g.scanned && isHost() ? viewRows() : viewDealRows();
   const people = C.M.seats.filter(s => !s.robot);
   if (!isHost()) {
     const me = mine()[0];
@@ -249,6 +254,104 @@ function viewDeal() {
   <div class="bar"><button class="btn btn--ghost" data-act="confirm" data-what="cancelGame">Back to setup</button>
     <button class="btn btn--primary" data-act="dealt"${g.scan === 'pending' ? ' disabled' : ''}>Cards are dealt</button></div>
   ${C.view.confirm === 'cancelGame' ? confirmBox('Go back to setup? The cards entered so far are cleared.', 'newGame', 'Back to setup', 'Stay here') : ''}`;
+}
+
+// A row of little face-down cards.
+const cardRow = n => `<span class="minirow" aria-hidden="true">${'<span></span>'.repeat(n)}</span>`;
+
+// Dealing by scanning the backs: everyone's cards, the robots' and the envelope's too, go
+// face-down in rows; this phone scans them, then says whose each row is.
+function viewDealRows() {
+  const g = C.M.game, need = g.deck.length;
+  if (!isHost()) {
+    const me = mine()[0];
+    return `<header class="head"><p class="eyebrow">Setting up</p><h1 class="h1">The host is dealing</h1>
+      <p class="sub">Everyone’s cards go face-down in rows, and the host phone scans them. ${me ? `${esc(me.name)} gets ${g.counts[me.id]} cards. ` : ''}When the host has said whose row is whose, pick up yours.</p></header>`;
+  }
+  return `
+  <header class="head"><p class="eyebrow">Setting up</p><h1 class="h1">Deal the cards in rows</h1></header>
+  <ol class="steps">
+    <li><div><p><strong>Make the envelope’s row.</strong> Shuffle the suspects, the weapons and the rooms separately and take the top card of each, face-down, without looking.</p></div></li>
+    <li><div><p><strong>Shuffle the other ${need - 3} and deal them face-down into rows</strong>, a row for each player, robots too:</p>
+      <ul class="dealt dealt--rows">${C.M.seats.map(s => `<li>${who(s)}<span class="meta">${cardRow(g.counts[s.id])}${g.counts[s.id]}</span></li>`).join('')}
+        <li><span class="who">${icon('lock')}<span>The envelope</span></span><span class="meta">${cardRow(3)}3</span></li></ul></div></li>
+    <li><div><p><strong>Lay each row’s cards side by side, all pointing the same way,</strong> with a gap between rows. The rows can go in any order.</p></div></li>
+    <li><div><p><strong>Scan them.</strong> Hold the phone over the rows, or move it slowly along them, until it has all ${need}. It ticks each card it has read but never shows which card it is.</p></div></li>
+  </ol>
+  ${C.cameraOK ? '' : '<div class="alert"><p>This phone can’t use its camera here. Go back to setup and choose another way to deal.</p></div>'}
+  <div class="bar"><button class="btn btn--ghost" data-act="confirm" data-what="cancelGame">Back to setup</button>
+    <button class="btn btn--primary" data-act="scanRows"${C.cameraOK ? '' : ' disabled'}>${icon('camera')} Scan the cards</button></div>
+  ${C.view.confirm === 'cancelGame' ? confirmBox('Go back to setup?', 'newGame', 'Back to setup', 'Stay here') : ''}`;
+}
+
+// The rows as the scan saw them, each card where it lies and numbered with its row. Parts
+// of the table the scan never saw together are drawn side by side.
+function rowsMap(rows) {
+  const W = 56, H = 87, GAP = 40, PAD = 6;
+  const corners = ({ at, axis: [ax, ay] }) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [at[0] - a * ay * W / 2 + b * ax * H / 2, at[1] + a * ax * W / 2 + b * ay * H / 2]);
+  const groups = [...new Set(rows.map(r => r.group))];
+  let x = PAD, height = 0;
+  const parts = groups.map(gi => {
+    const mine = rows.map((r, i) => ({ r, i })).filter(({ r }) => r.group === gi);
+    const pts = mine.flatMap(({ r }) => r.cards.flatMap(corners));
+    const x0 = Math.min(...pts.map(p => p[0])), y0 = Math.min(...pts.map(p => p[1]));
+    const w = Math.max(...pts.map(p => p[0])) - x0, h = Math.max(...pts.map(p => p[1])) - y0;
+    const dx = x - x0, dy = PAD - y0;
+    x += w + GAP;
+    height = Math.max(height, h);
+    return mine.map(({ r, i }) => r.cards.map(c => `<polygon points="${corners(c).map(([px, py]) => `${(px + dx).toFixed(1)},${(py + dy).toFixed(1)}`).join(' ')}"/>
+      <text x="${(c.at[0] + dx).toFixed(1)}" y="${(c.at[1] + dy).toFixed(1)}">${i + 1}</text>`).join('')).join('');
+  });
+  const width = x - GAP + PAD;
+  return `<svg class="rowsmap" viewBox="0 0 ${width.toFixed(0)} ${(height + 2 * PAD).toFixed(0)}" role="img" aria-label="The cards as the scan saw them, each numbered with its row">${parts.join('')}</svg>`;
+}
+
+// Which row of the scan is whose. The envelope's row is filled in when it's the only row
+// of three and no player was dealt three.
+function rowsGuess(g, rows) {
+  const to = rows.map(() => '');
+  const threes = rows.map((r, i) => (r.cards.length === 3 ? i : -1)).filter(i => i >= 0);
+  if (threes.length === 1 && !C.M.seats.some(s => g.counts[s.id] === 3)) to[threes[0]] = 'envelope';
+  return to;
+}
+
+function viewRows() {
+  const g = C.M.game, rows = g.scanned.rows, need = g.deck.length, seats = C.M.seats;
+  const found = rows.reduce((t, r) => t + r.cards.length, 0);
+  const again = primary => `<button class="btn ${primary ? 'btn--primary' : 'btn--ghost'}" data-act="rescanRows">${icon('camera')} Scan again</button>`;
+  const back = `<button class="btn btn--ghost" data-act="confirm" data-what="cancelGame">Back to setup</button>`;
+  const cancelBox = C.view.confirm === 'cancelGame' ? confirmBox('Go back to setup?', 'newGame', 'Back to setup', 'Stay here') : '';
+  const problem = found < need
+    ? `The scan found ${found} of the ${need} cards. Scan again, slowly over every row, until it has them all.`
+    : rows.length !== seats.length + 1
+      ? `The scan found ${rows.length} rows, but there are ${seats.length} players and the envelope, so there should be ${seats.length + 1}. Check each row’s cards lie side by side with a gap between rows, then scan again.`
+      : '';
+  if (problem) {
+    return `<header class="head"><p class="eyebrow">Setting up</p><h1 class="h1">Scan the cards again</h1></header>
+    <div class="alert"><p>${problem}</p></div>
+    ${found ? rowsMap(rows) : ''}
+    <div class="bar">${back}${again(true)}</div>${cancelBox}`;
+  }
+  const to = C.view.assign || rowsGuess(g, rows);
+  const targets = [...seats.map(s => ({ id: s.id, label: s.robot ? `${s.name} (robot)` : s.name, want: g.counts[s.id] })), { id: 'envelope', label: 'The envelope', want: 3 }];
+  const note = (r, t) => {
+    if (!t) return '';
+    if (t.id === 'envelope') return r.cards.length === 3 ? '' : '<p class="rownote rownote--bad">The envelope has 3 cards.</p>';
+    return r.cards.length === t.want ? '' : `<p class="rownote">${esc(t.label)} was meant to get ${t.want}. Fine, if that’s how they were dealt.</p>`;
+  };
+  const items = rows.map((r, i) => {
+    const t = targets.find(x => x.id === to[i]);
+    return `<li class="rowpick"><label class="rowpick-line" for="row-${i}"><span class="rowpick-n">Row ${i + 1}</span><span class="meta">${cardRow(r.cards.length)}${r.cards.length} cards</span></label>
+      <select id="row-${i}" data-in="rowTo" data-i="${i}"><option value="">Whose row?</option>${targets.map(x => `<option value="${x.id}"${to[i] === x.id ? ' selected' : to.includes(x.id) ? ' disabled' : ''}>${esc(x.label)}</option>`).join('')}</select>
+      ${note(r, t)}</li>`;
+  }).join('');
+  const ready = to.every(Boolean) && targets.every(t => to.filter(x => x === t.id).length === 1) && rows[to.indexOf('envelope')].cards.length === 3;
+  return `<header class="head"><p class="eyebrow">Setting up</p><h1 class="h1">Whose row is which?</h1>
+    <p class="sub">All ${need} cards scanned. Here are the rows as the phone saw them, row 1 at the top.</p></header>
+  ${rowsMap(rows)}
+  <ol class="rowpicks">${items}</ol>
+  <div class="bar">${again(false)}<button class="btn btn--primary" data-act="assignRows"${ready ? '' : ' disabled'}>These are right</button></div>
+  <p><button class="link" data-act="confirm" data-what="cancelGame">Back to setup</button></p>${cancelBox}`;
 }
 
 function viewScan() {
@@ -357,7 +460,9 @@ function viewReady() {
   const g = C.M.game;
   const line = g.dealMode === 'app'
     ? 'Everyone has a hand. Look at your own cards before you start.'
-    : g.scan === 'done'
+    : g.dealMode === 'backs'
+      ? 'The app knows every hand and what’s in the envelope. Pick up your own row. Put the robots’ rows in the box and the envelope’s row in the envelope, without looking. Make accusations in the app; it checks them against the envelope.'
+      : g.scan === 'done'
       ? 'The robots have their cards, and the app knows what’s in the envelope. Make accusations in the app; it checks them against the envelope.'
       : 'The robots have their cards and the app holds the answer. Leave the paper envelope closed. Make accusations in the app.';
   const look = g.dealMode === 'app' && mine().length;
@@ -383,7 +488,7 @@ function viewHand() {
   }).join('')}</div>
   <section class="notes"><h2 class="h2">Shown to you</h2>${p.shown.length
     ? `<ul class="shown">${p.shown.map(x => `<li><span class="num">No. ${x.n}</span>${who(seat(x.from))}<span class="sub">showed</span>${cc(card(x.card))}</li>`).join('')}</ul>`
-    : `<p class="empty">Nothing yet. ${g.dealMode === 'physical' ? 'Cards a robot shows you are listed here.' : 'Cards other players show you are listed here.'}</p>`}</section>
+    : `<p class="empty">Nothing yet. ${g.dealMode !== 'app' ? 'Cards a robot shows you are listed here.' : 'Cards other players show you are listed here.'}</p>`}</section>
   <div class="bar"><button class="btn btn--primary btn--big" data-act="hideHand">${shared() ? (last ? 'Hide my cards' : 'Hide and pass on') : 'Back to the table'}</button></div>`;
 }
 
@@ -509,7 +614,7 @@ function viewAnswer() {
     } else {
       result = `<h2 class="h2">${esc(d.name)} ${g.answered.includes(e.n) ? 'showed' : 'is choosing'} a card for ${esc(asker.name)}</h2>${back}`;
     }
-  } else if (g.dealMode === 'physical') {
+  } else if (g.dealMode !== 'app') {
     result = `<h2 class="h2">${esc(d.name)}, show ${esc(asker.name)} a card</h2>
       <p class="sub">Secretly show ${esc(asker.name)} one of your matching cards.</p>
       <div class="bar"><button class="btn btn--primary btn--big" data-act="toTable">Done</button></div>`;

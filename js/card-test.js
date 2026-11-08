@@ -3,8 +3,8 @@
 
 import { grayOf, readLayout } from './backs.js';
 import { CARD_MARKERS, DECOY, REG_MARK } from './markers.js';
-import { startLiveScan } from './live-scan.js';
-import { esc, keepAwake } from './util.js';
+import { openScanner, paintMap, describeScan } from './scan-screen.js';
+import { esc } from './util.js';
 import { UPDATED } from './version.js';
 
 const NAME = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
@@ -149,7 +149,7 @@ function show(photo, res, how, map) {
   $('results').hidden = false;
   $('shotTitle').textContent = map ? 'The table, as the scan pieced it together' : 'What the reader saw';
   $('shotKey').hidden = !!map;
-  if (map) paintMap($('shot'), map, { names: true, width: $('shot').parentElement.clientWidth });
+  if (map) paintMap($('shot'), map, { label: id => NAME[id] || `#${id}`, width: $('shot').parentElement.clientWidth });
   else draw(photo, res);
   $('status').textContent = how;
   return [summary, ...notes, quality, ...groups.flatMap((g, gi) => g.rows.map((row, r) => `${rowName(g, gi, r)}: ${row.map(c => NAME[c.id]).join(', ')}`))].join('\n');
@@ -229,97 +229,12 @@ function startOver() {
   $('status').textContent = 'Started over.';
 }
 
-/* ---------- the table map ---------- */
-
-// Draws the table as a live scan has pieced it together: each group's cards as card
-// shapes, groups side by side, scaled to fit the cards. While scanning, identified cards
-// are green, cards seen but not read yet are red outlines, and a white box shows where
-// the camera is (cut off where it runs past the cards, so the map doesn't jump about as
-// the phone moves). With `names`, each card is labelled. `width` and `height` are in CSS
-// pixels; without `height`, the canvas takes the map's own shape.
-const MAP_CARD = { w: 56, h: 87 };
-function paintMap(cv, map, { names = false, width = cv.clientWidth, height = null } = {}) {
-  const dpr = window.devicePixelRatio || 1, GAP = 40, PAD = 8;
-  const corners = c => {
-    const [ax, ay] = c.axis, px = -ay, py = ax;
-    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [
-      c.centre[0] + a * px * MAP_CARD.w / 2 + b * ax * MAP_CARD.h / 2,
-      c.centre[1] + a * py * MAP_CARD.w / 2 + b * ay * MAP_CARD.h / 2]);
-  };
-  const groups = map ? map.groups.filter(g => g.cards.length || g.waiting.length) : [];
-  const boxes = groups.map(g => {
-    const pts = g.cards.concat(g.waiting).flatMap(corners);
-    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
-  });
-  const totalW = boxes.reduce((t, b) => t + b.x1 - b.x0, 0) + GAP * Math.max(0, boxes.length - 1);
-  const maxH = Math.max(1, ...boxes.map(b => b.y1 - b.y0));
-  const h = height || Math.min(Math.max(120, (width - 2 * PAD) * maxH / Math.max(1, totalW) + 2 * PAD), 1.4 * width);
-  cv.width = Math.round(width * dpr);
-  cv.height = Math.round(h * dpr);
-  if (!height) cv.style.height = `${Math.round(h)}px`;
-  const ctx = cv.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, h);
-  if (!groups.length) return;
-  // While only a few cards are found, they're drawn no bigger than this.
-  const k = Math.min((width - 2 * PAD) / Math.max(1, totalW), (h - 2 * PAD) / maxH, names ? Infinity : (h - 2 * PAD) / (2.5 * MAP_CARD.h));
-  let ox = (width - totalW * k) / 2;
-  groups.forEach((g, gi) => {
-    const b = boxes[gi], oy = (h - (b.y1 - b.y0) * k) / 2;
-    const P = ([x, y]) => [ox + (x - b.x0) * k, oy + (y - b.y0) * k];
-    const path = pts => { ctx.beginPath(); pts.map(P).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
-    for (const c of g.cards) {
-      path(corners(c));
-      ctx.fillStyle = names ? '#141B2A' : '#3DDC84';
-      ctx.fill();
-      if (names) { ctx.strokeStyle = '#D9B46A'; ctx.lineWidth = 1.5; ctx.stroke(); }
-    }
-    for (const c of g.waiting) {
-      path(corners(c));
-      ctx.setLineDash(names ? [4, 3] : []);
-      ctx.strokeStyle = '#FF5A4E';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    if (g.current && map.view && !names) {
-      path(map.view);
-      ctx.strokeStyle = 'rgba(255, 255, 255, .85)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    if (names) {
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#E8C478';
-      // Each name as large as fits across its card.
-      for (const c of g.cards) {
-        const text = NAME[c.id] || `#${c.id}`, [x, y] = P(c.centre);
-        ctx.font = '700 10px Figtree, system-ui, sans-serif';
-        const size = Math.max(6, Math.min(14, 10 * 0.86 * MAP_CARD.w * k / ctx.measureText(text).width));
-        ctx.font = `700 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
-        ctx.fillText(text, x, y);
-      }
-      ctx.fillStyle = '#FF5A4E';
-      ctx.font = '800 14px Figtree, system-ui, sans-serif';
-      for (const c of g.waiting) ctx.fillText('?', ...P(c.centre));
-      ctx.fillStyle = '#E8C478';
-      if (groups.length > 1) {
-        ctx.fillStyle = '#566173';
-        ctx.font = '700 12px Figtree, system-ui, sans-serif';
-        ctx.fillText(`Group ${gi + 1}`, ox + (b.x1 - b.x0) * k / 2, Math.max(10, oy - 10));
-      }
-    }
-    ox += (b.x1 - b.x0 + GAP) * k;
-  });
-}
-
 /* ---------- live scan ---------- */
 
-let live = null, starting = false, audio = null;
+let live = null;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const DECK_SIZE = Object.keys(CARD_MARKERS).length;
+const nameOf = id => NAME[id] || `#${id}`;
 
 // How many cards the scan should find before it stops: the whole deck, a number, or
 // however many there are (0), when it stops once the phone is held still.
@@ -345,141 +260,9 @@ function toGo(v) {
   return names.length <= 4 ? ` Still to find: ${names.join(', ')}.` : ` ${left} to go.`;
 }
 
-// The line at the top says what most of the last few reads made of the view, and stays
-// up for at least HOLD_MS: one read that misses a card, or catches a reflection,
-// shouldn't make it flicker. A read that finds a new card has its say at once.
-const HOLD_MS = 800, LATELY_MS = 700;
-let said = null, lately = [];
-function steady(v, now) {
-  const kind = v.state === 'unclear' ? `unclear ${!v.unread ? 'steady' : v.small ? 'small' : 'light'}` : v.state;
-  lately.push({ kind, v, t: now });
-  while (now - lately[0].t > LATELY_MS) lately.shift();
-  if (v.state === 'locked' || !said || v.count > said.v.count) { said = { kind, v, at: now }; return v; }
-  // The commonest lately, as of its latest read; a tie goes to the latest.
-  const n = new Map();
-  for (const r of lately) n.set(r.kind, (n.get(r.kind) || 0) + 1);
-  const best = lately.reduce((a, b) => (n.get(b.kind) >= n.get(a.kind) ? b : a));
-  if (said && best.kind === said.kind) said.v = best.v;
-  else if (!said || now - said.at >= HOLD_MS) said = { kind: best.kind, v: best.v, at: now };
-  return { ...said.v, count: v.count, ids: v.ids };
-}
-
-function describe(v) {
-  switch (v.state) {
-    case 'partial': return 'I can see card corners. Get whole cards in view.';
-    case 'unclear':
-      if (!v.unread) return 'Hold steady…';
-      return v.small ? `Can’t read ${plural(v.unread, 'card')} yet: move a little closer.`
-        : `Can’t read ${plural(v.unread, 'card')}: tilt away from the light, or hold steadier.`;
-    case 'collecting': return 'Reading the cards…';
-    case 'settling': return expected() ? `Got the cards in view.${toGo(v)} Move on to the rest.` : 'Got the cards in view. Hold still to finish, or move on to more.';
-    case 'locked': return 'Done.';
-    default: return v.count ? `No cards in view.${toGo(v) || ' Point at the ones not counted yet.'}` : 'Point the camera at the cards, lying face-down. Each gets a green tick once it’s identified.';
-  }
-}
-
-// Draws one mark on each card in the camera view: a green tick and its name once the card
-// is identified, grey "…" while it's still being read, red "?" when it can't be read
-// (glare or blur) and isn't one already identified. Identified cards keep their tick
-// wherever the map puts them in this view, whether or not this read saw them. A read
-// describes a frame from a moment ago, so while the phone moves the marks trail the
-// cards: they fade unless a fresh read replaces them, after a bit longer than reads take.
-// A read that made out no card at all (a frame blurred as the phone moved) leaves the
-// marks of the read before to fade, rather than wiping them.
-let readGap = 300, lastRead = 0;
-function drawOverlay(res, fw, fh, verdict = null) {
-  const video = $('video'), cv = $('overlay');
-  const now = performance.now();
-  if (res && lastRead) readGap = 0.7 * readGap + 0.3 * Math.min(2000, now - lastRead);
-  lastRead = res ? now : 0;
-  const strays = verdict ? verdict.strays : [];
-  if (res && !res.cards.length && !strays.length) return;
-  const counted = new Set(verdict ? verdict.ids : []), map = verdict && verdict.map;
-  cv.style.transition = 'none';
-  cv.style.opacity = '1';
-  if (res) {
-    void cv.offsetWidth;
-    cv.style.transition = `opacity .4s linear ${Math.round(Math.max(350, 1.5 * readGap))}ms`;
-    cv.style.opacity = '0';
-  }
-  const cw = video.clientWidth, ch = video.clientHeight, dpr = window.devicePixelRatio || 1;
-  cv.width = Math.round(cw * dpr);
-  cv.height = Math.round(ch * dpr);
-  const ctx = cv.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cw, ch);
-  if (!res) return;
-  // The video is shown whole, so work out where the frame sits in its box.
-  const s = Math.min(cw / fw, ch / fh), ox = (cw - fw * s) / 2, oy = (ch - fh * s) / 2;
-  const P = ([x, y]) => [ox + x * s, oy + y * s];
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  // A rounded badge, sized to suit the card it sits on.
-  const badge = (text, [x, y], fill, mm) => {
-    const size = Math.max(9, Math.min(15, 60 * mm * s / 7));
-    ctx.font = `800 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
-    const w = ctx.measureText(text).width + size * 1.3, h = size * 1.9;
-    ctx.fillStyle = fill;
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2); else ctx.rect(x - w / 2, y - h / 2, w, h);
-    ctx.fill();
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(text, x, y + 1);
-  };
-  const GREEN = '#1F9D55', GREY = 'rgba(55, 62, 74, .92)', RED = '#D93A2B';
-  const name = id => NAME[id] || `#${id}`;
-  for (const c of res.cards) badge(counted.has(c.id) ? `✓ ${name(c.id)}` : '…', P(c.centre), counted.has(c.id) ? GREEN : GREY, c.mm);
-  for (const u of strays) badge('?', P(u.centre), RED, u.mm);
-  // Identified cards this read didn't see, where the map says they are.
-  // (`frame` is there only when this read was placed, so `current` is this read's group.)
-  const group = map && map.frame && map.groups.find(g => g.current);
-  if (group) {
-    const here = new Set(res.cards.map(c => c.id)), ppm = map.frame.ppm;
-    for (const c of group.cards) {
-      if (here.has(c.id)) continue;
-      const [x, y] = map.frame.toFrame(c.centre);
-      if (x < 0 || y < 0 || x > fw || y > fh) continue;
-      badge(`✓ ${name(c.id)}`, P([x, y]), GREEN, ppm);
-    }
-  }
-}
-
-// A buzz where the phone can, and a two-note chime.
-function chime() {
-  try { if (navigator.vibrate) navigator.vibrate([60, 40, 120]); } catch (e) { /* no buzz */ }
-  if (!audio) return;
-  try {
-    const t = audio.currentTime;
-    for (const [freq, at] of [[880, 0], [1320, 0.13]]) {
-      const o = audio.createOscillator(), g = audio.createGain();
-      o.frequency.value = freq;
-      o.connect(g);
-      g.connect(audio.destination);
-      g.gain.setValueAtTime(0.0001, t + at);
-      g.gain.exponentialRampToValueAtTime(0.25, t + at + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.12);
-      o.start(t + at);
-      o.stop(t + at + 0.13);
-    }
-  } catch (e) { /* no chime */ }
-}
-
-function cameraProblem(e) {
-  if (e && e.name === 'NotAllowedError') return 'The camera wasn’t allowed. Allow it for this site in the browser’s settings, then try again.';
-  if (e && (e.name === 'NotFoundError' || e.name === 'OverconstrainedError')) return 'This phone’s camera couldn’t be opened.';
-  return `The camera stopped: ${(e && e.message) || 'something went wrong'}.`;
-}
-
-function closeScanner() {
-  $('live').hidden = true;
-  document.documentElement.classList.remove('scanning');
-  drawOverlay(null);
-}
-
 function stopLive(message) {
   if (live) live.stop();
   live = null;
-  closeScanner();
   if (message) $('status').textContent = message;
 }
 
@@ -497,72 +280,33 @@ function scanResult(found, final, map, complete) {
   return { markers: final ? final.markers : [], cards: found, unread: [], loose: [], waiting, doubles: [], rows: groups.flatMap(g => g.rows), groups };
 }
 
-async function startLive() {
-  if (live || starting) return;
-  starting = true;
-  // The chime needs sound started from a tap, so it starts here.
-  try {
-    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-    if (audio.resume) audio.resume();
-  } catch (e) { audio = null; }
+function startLive() {
+  if (live) return;
   $('results').hidden = true;
-  $('live').hidden = false;
-  document.documentElement.classList.add('scanning');
-  $('liveStatus').textContent = 'Starting the camera…';
-  $('liveCount').textContent = '';
-  $('liveInfo').textContent = '';
-  $('settle').style.width = '0';
-  drawOverlay(null);
-  said = null;
-  lately = [];
-  paintMap($('minimap'), null, { width: $('minimap').clientWidth || 300, height: 84 });
-  $('mapKey').hidden = true;
-  keepAwake();
-  try {
-    live = await startLiveScan({
-      video: $('video'),
-      expected: expected(),
-      onRead({ verdict, res, w, h, fps, camera }) {
-        drawOverlay(res, w, h, verdict);
-        $('liveStatus').textContent = describe(steady(verdict, performance.now()));
-        const groups = verdict.map ? verdict.map.groups.length : 0;
-        $('liveCount').textContent = (expected() ? `${verdict.count} of ${expected()}` : verdict.count ? plural(verdict.count, 'card') : '') + (groups > 1 ? ` · ${groups} groups` : '');
-        paintMap($('minimap'), verdict.map, { width: $('minimap').clientWidth, height: $('minimap').clientHeight });
-        $('mapKey').hidden = !(verdict.map && verdict.map.groups.length);
-        $('waitingKey').hidden = !(verdict.map && verdict.map.groups.some(g => g.waiting.length));
-        // The bar: how many of the cards it's looking for it has, or how long it's been
-        // held still when it doesn't know how many.
-        const bar = expected() ? Math.min(1, verdict.count / expected()) : verdict.settle || (verdict.state === 'locked' ? 1 : 0);
-        $('settle').style.width = `${Math.round(bar * 100)}%`;
-        $('liveInfo').textContent = `Camera ${camera[0]} × ${camera[1]} · ${fps ? fps.toFixed(1) : '…'} reads a second`;
-      },
-      onLock({ found, map, last: final, canvas, w, h, early }) {
-        live = null;
-        closeScanner();
-        // Cards found means frames were read, so there is a last frame to show.
-        if (!found.length || !final) { $('status').textContent = 'No cards were counted. Try again a little closer.'; return; }
-        if (!early) chime();
-        last = null;
-        const complete = expected() > 0 && found.length >= expected();
-        const res = scanResult(found, final, map, complete);
-        const text = show({ canvas, w, h }, res, early ? `Finished by hand with ${plural(found.length, 'card')} counted.`
-          : complete ? `Found all ${plural(expected(), 'card')} it was looking for.`
-            : 'Stopped: you held still with every card in view read and nothing new turning up.', map);
-        addToTally(res);
-        canvas.toBlob(b => { if (b) last = { file: new File([b], 'live-scan.jpg', { type: 'image/jpeg' }), text }; }, 'image/jpeg', 0.92);
-        $('results').scrollIntoView({ block: 'start', behavior: 'smooth' });
-      },
-      onError(e) {
-        live = null;
-        $('liveStatus').textContent = cameraProblem(e);
-      },
-    });
-  } catch (e) {
-    live = null;
-    $('liveStatus').textContent = cameraProblem(e);
-  } finally {
-    starting = false;
-  }
+  const want = expected();
+  live = openScanner($('live'), {
+    expected: want,
+    label: nameOf,
+    describe: v => describeScan(v, want, toGo),
+    onLock({ found, map, last: final, canvas, w, h, early }) {
+      live = null;
+      // Cards found means frames were read, so there is a last frame to show.
+      if (!found.length || !final) { $('status').textContent = 'No cards were counted. Try again a little closer.'; return; }
+      last = null;
+      const complete = want > 0 && found.length >= want;
+      const res = scanResult(found, final, map, complete);
+      const text = show({ canvas, w, h }, res, early ? `Finished by hand with ${plural(found.length, 'card')} counted.`
+        : complete ? `Found all ${plural(want, 'card')} it was looking for.`
+          : 'Stopped: you held still with every card in view read and nothing new turning up.', map);
+      addToTally(res);
+      canvas.toBlob(b => { if (b) last = { file: new File([b], 'live-scan.jpg', { type: 'image/jpeg' }), text }; }, 'image/jpeg', 0.92);
+      $('results').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    },
+    onCancel(why) {
+      live = null;
+      $('status').textContent = why === 'hidden' ? 'Scanning stopped when the page was hidden. Tap Scan live to carry on.' : 'Cancelled.';
+    },
+  });
 }
 
 if (!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
@@ -574,12 +318,7 @@ setupExpect();
 $('version').textContent = `This page was last updated ${new Date(UPDATED).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.`;
 $('scanLive').addEventListener('click', startLive);
 $('scanMore').addEventListener('click', startLive);
-$('stopLive').addEventListener('click', () => stopLive('Cancelled.'));
-$('finishLive').addEventListener('click', () => { if (live) live.finish(); else stopLive(); });
 $('startOver').addEventListener('click', startOver);
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && live) stopLive('Scanning stopped when the page was hidden. Tap Scan live to carry on.');
-});
 
 for (const id of ['camera', 'library']) {
   $(id).addEventListener('change', e => { stopLive(); handle(e.target.files[0]); e.target.value = ''; });

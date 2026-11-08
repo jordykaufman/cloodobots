@@ -29,32 +29,8 @@ body { margin: 0; }
 .sizes .no { color: var(--muted); }
 .key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem; color: var(--muted); }
 .key span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--k); }
-/* The live scan takes the whole screen: what it says on top, the camera in the middle,
-   the buttons at the bottom. */
-html.scanning, html.scanning body { overflow: hidden; }
-.scanner { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: #000; color: #F2F4F7;
-  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
-.scanner-top { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; padding: 12px 16px 10px; }
-.scanner-status { margin: 0; font: 700 1.05rem/1.3 var(--font-body); min-height: 2.6em; }
-.scanner-count { margin: 0; font: 800 1.05rem/1.3 var(--font-body); color: #3DDC84; white-space: nowrap; }
-.scanner-view { position: relative; flex: 1; min-height: 0; }
-.scanner-view video, .scanner-view canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.scanner-view video { object-fit: contain; }
-.scanner-view canvas { pointer-events: none; }
-.scanner-bottom { display: grid; gap: 8px; padding: 10px 16px 14px; }
-.minimap { display: block; width: 100%; height: 84px; }
 .expect { display: flex; align-items: center; gap: 10px; font-weight: 650; }
 .expect select { flex: 1; min-width: 0; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); }
-.settle { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .18); overflow: hidden; }
-.settle span { display: block; height: 100%; width: 0; background: #3DDC84; transition: width .25s linear; }
-.scanner-info { margin: 0; font-size: .8rem; color: rgba(242, 244, 247, .6); }
-/* What the map's marks mean, each with a small copy of its mark. */
-.scanner-key { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 0; font-size: .8rem; color: rgba(242, 244, 247, .8); }
-.scanner-key span::before { content: ""; display: inline-block; box-sizing: border-box; width: 8px; height: 12px; margin-right: 6px; vertical-align: -2px; border-radius: 1px; }
-.scanner-key .found::before { background: #3DDC84; }
-.scanner-key .waiting::before { border: 1.5px solid #FF5A4E; }
-.scanner-key .camera::before { width: 15px; height: 11px; border: 1.5px solid rgba(255, 255, 255, .85); }
-.scanner-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .again { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
 .again .btn { flex: 1 1 12rem; }
 .tally { margin: 0; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; }
@@ -88,16 +64,16 @@ html.scanning, html.scanning body { overflow: hidden; }
     </div>
     <div class="scanner-view">
       <video id="video" muted playsinline></video>
-      <canvas id="overlay" aria-hidden="true"></canvas>
+      <canvas class="scanner-marks" id="overlay" aria-hidden="true"></canvas>
     </div>
     <div class="scanner-bottom">
       <canvas class="minimap" id="minimap" aria-hidden="true"></canvas>
-      <p class="scanner-key" id="mapKey" hidden><span class="found">identified</span><span class="waiting" id="waitingKey" hidden>seen, can’t read yet</span><span class="camera">what the camera sees</span></p>
+      <p class="scanner-key" hidden><span class="found">identified</span><span class="waiting" hidden>seen, can’t read yet</span><span class="camera">what the camera sees</span></p>
       <div class="settle" aria-hidden="true"><span id="settle"></span></div>
       <p class="scanner-info" id="liveInfo"></p>
       <div class="scanner-buttons">
-        <button class="btn btn--ghost" type="button" id="stopLive">Cancel</button>
-        <button class="btn btn--primary" type="button" id="finishLive">Done</button>
+        <button class="btn btn--ghost" type="button" data-scan="cancel">Cancel</button>
+        <button class="btn btn--primary" type="button" data-scan="done">Done</button>
       </div>
     </div>
   </div>

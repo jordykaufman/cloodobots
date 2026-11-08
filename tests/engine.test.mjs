@@ -171,3 +171,69 @@ test('a seat held by a phone that has gone away can be claimed by another', () =
   ok(dispatch(st, 'phone-b', { type: 'claim', seat: p2.id }, new Set(['phone-b'])));
   assert.equal(st.claims[p2.id], 'phone-b');
 });
+
+test('the people always get the same number of cards when there are robots to take up the rest', () => {
+  const seats = (p, r) => [...Array.from({ length: p }, (_, i) => ({ id: `p${i}` })), ...Array.from({ length: r }, (_, i) => ({ id: `r${i}`, robot: true }))];
+  const hands = (p, r) => { const c = dealCounts(seats(p, r), 18); return [Array.from({ length: p }, (_, i) => c[`p${i}`]), Array.from({ length: r }, (_, i) => c[`r${i}`])]; };
+  assert.deepEqual(hands(4, 1), [[4, 4, 4, 4], [2]]);
+  assert.deepEqual(hands(3, 1), [[4, 4, 4], [6]]);
+  assert.deepEqual(hands(2, 3), [[3, 3], [4, 4, 4]]);
+  assert.deepEqual(hands(5, 2), [[3, 3, 3, 3, 3], [2, 1]]);
+  // No robots: as in the box rules, some people get one more.
+  assert.deepEqual(hands(4, 0), [[5, 5, 4, 4], []]);
+});
+
+// A game dealt by scanning the backs: rows as the scan gives them, every card with a place
+// on the table (millimetres), the envelope's row last.
+function backsGame() {
+  const st = newState();
+  st.setup.dealMode = 'backs';
+  ok(dispatch(st, HOST, { type: 'start' }));
+  const g = st.game;
+  const env = ['s2', 'w3', 'r4'];
+  const rest = g.deck.map(c => c.id).filter(id => !env.includes(id));
+  let k = 0;
+  const rows = g.seats.map(s => rest.slice(k, k += g.counts[s.id])).concat([env]);
+  const layout = rows.map((row, r) => row.map((id, i) => ({ id, centre: [i * 70, r * 110], axis: [0, 1] })));
+  return { st, g, rows, layout, env };
+}
+
+test('dealing by scanning the backs: each row goes to the player picked for it, and the envelope row is the answer', () => {
+  const { st, g, rows, layout, env } = backsGame();
+  assert.equal(g.phase, 'deal');
+  ok(dispatch(st, HOST, { type: 'scanned', groups: [{ rows: layout }] }));
+  // Other phones, and the screen, see the rows' shapes but not which card is where.
+  const m = modelFor(st, HOST);
+  assert.equal(m.game.scanned.rows.length, rows.length);
+  assert.ok(!JSON.stringify(m.game.scanned).includes('"id"'));
+  const to = g.seats.map(s => s.id).concat(['envelope']);
+  ok(dispatch(st, HOST, { type: 'assign', to }));
+  assert.equal(g.phase, 'play');
+  assert.deepEqual(g.solution, { suspect: env[0], weapon: env[1], room: env[2] });
+  g.seats.forEach((s, i) => assert.deepEqual(s.hand.slice().sort(), rows[i].slice().sort()));
+  assert.equal(g.scanned, null);
+});
+
+test('dealing by scanning the backs checks the rows add up', () => {
+  const { st, g, layout } = backsGame();
+  const to = g.seats.map(s => s.id).concat(['envelope']);
+  // Not every card found.
+  ok(dispatch(st, HOST, { type: 'scanned', groups: [{ rows: layout.map(r => r.slice(1)) }] }));
+  assert.match(dispatch(st, HOST, { type: 'assign', to }).error, /found 16 of the 21/);
+  ok(dispatch(st, HOST, { type: 'scanned', groups: [{ rows: layout }] }));
+  // A player picked twice, a player left out, no envelope.
+  assert.match(dispatch(st, HOST, { type: 'assign', to: [to[0], ...to.slice(0, -1)] }).error, /Two rows are both/);
+  assert.match(dispatch(st, HOST, { type: 'assign', to: to.slice(0, -1).concat([to[0]]) }).error, /Two rows|None of the rows/);
+  // The envelope must be one of each kind: a player's row of 4 won't do.
+  const swapped = to.slice(); [swapped[0], swapped[4]] = [swapped[4], swapped[0]];
+  assert.match(dispatch(st, HOST, { type: 'assign', to: swapped }).error, /one suspect, one weapon and one room/);
+  assert.equal(g.phase, 'deal');
+  // Rows run together: one fewer row than players and envelope.
+  ok(dispatch(st, HOST, { type: 'scanned', groups: [{ rows: [layout[0].concat(layout[1]), ...layout.slice(2)] }] }));
+  assert.match(dispatch(st, HOST, { type: 'assign', to }).error, /found 4 rows/);
+  // Only the printed deck can be scanned.
+  const other = newState();
+  other.setup.dealMode = 'backs';
+  other.setup.cards.weapon[1] = 'Knife';
+  assert.match(validateSetup(other.setup), /printed deck/);
+});

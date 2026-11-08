@@ -29,6 +29,27 @@
 </svg>
 <main id="app"><p style="padding:24px">Loading…</p></main>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<!-- The live scanner for dealing by scanning the backs (scan-screen.js). It never names a card. -->
+<div class="scanner" id="live" hidden>
+  <div class="scanner-top">
+    <p class="scanner-status" role="status" aria-live="polite">Starting the camera…</p>
+    <p class="scanner-count"></p>
+  </div>
+  <div class="scanner-view">
+    <video muted playsinline></video>
+    <canvas class="scanner-marks" aria-hidden="true"></canvas>
+  </div>
+  <div class="scanner-bottom">
+    <canvas class="minimap" aria-hidden="true"></canvas>
+    <p class="scanner-key" hidden><span class="found">read</span><span class="waiting" hidden>seen, can’t read yet</span><span class="camera">what the camera sees</span></p>
+    <div class="settle" aria-hidden="true"><span></span></div>
+    <p class="scanner-info"></p>
+    <div class="scanner-buttons">
+      <button class="btn btn--ghost" type="button" data-scan="cancel">Cancel</button>
+      <button class="btn btn--primary" type="button" data-scan="done">Done</button>
+    </div>
+  </div>
+</div>
 <noscript><p style="padding:24px">This game needs JavaScript turned on.</p></noscript>
 <script type="module" src="js/main.js"></script>
 </body>

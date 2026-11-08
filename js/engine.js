@@ -2,6 +2,8 @@
 // robots' cards and the answer. Every phone, the host included, draws its screens from
 // modelFor(), which leaves out anything that phone's players shouldn't see.
 
+import { CARD_MARKERS } from './markers.js';
+
 export const CATS = ['suspect', 'weapon', 'room'];
 export const CAT = { suspect: 'Suspect', weapon: 'Weapon', room: 'Room' };
 export const CATS_PL = { suspect: 'Suspects', weapon: 'Weapons', room: 'Rooms' };
@@ -77,17 +79,40 @@ export function nextName(setup, robot) {
   for (let i = 1; ; i++) { const n = robot ? `Robot ${i}` : `Player ${i}`; if (!used.has(n.toLowerCase())) return n; }
 }
 
-// Every seat gets the same number of cards; leftovers go to robots first so the people stay even.
+// How many cards each seat is dealt. The people always get the same number as each
+// other when there are robots to take up the difference, and the hands are kept as even
+// as that allows: the people get whichever of the two nearest even shares leaves the
+// hands most even (on a tie, the smaller), and the robots share out the rest, each
+// getting at least one card. With 2 people and 2 robots that's 4 each and 5 each; with
+// 4 people and 1 robot, 4 each and 2. With no robots, the first seats get the extra cards.
 export function dealCounts(seats, nCards) {
-  const base = Math.floor(nCards / seats.length);
-  let extra = nCards % seats.length;
-  const counts = {};
-  seats.forEach(s => { counts[s.id] = base; });
-  for (const s of [...seats.filter(x => x.robot), ...seats.filter(x => !x.robot)]) {
-    if (!extra) break;
-    counts[s.id]++; extra--;
+  const people = seats.filter(s => !s.robot), robots = seats.filter(s => s.robot);
+  const base = Math.floor(nCards / seats.length), counts = {};
+  if (!people.length || !robots.length) {
+    let extra = nCards % seats.length;
+    seats.forEach(s => { counts[s.id] = base + (extra-- > 0 ? 1 : 0); });
+    return counts;
   }
+  const even = nCards / seats.length;
+  let best = null;
+  for (const each of [base, base + 1]) {
+    const rest = nCards - each * people.length;
+    if (rest < robots.length) continue;
+    const bot = i => Math.floor(rest / robots.length) + (i < rest % robots.length ? 1 : 0);
+    const spread = people.length * (each - even) ** 2 + robots.reduce((t, r, i) => t + (bot(i) - even) ** 2, 0);
+    if (!best || spread < best.spread - 1e-9) best = { each, bot, spread };
+  }
+  people.forEach(p => { counts[p.id] = best.each; });
+  robots.forEach((r, i) => { counts[r.id] = best.bot(i); });
   return counts;
+}
+
+// Whether the game's cards are the printed deck, whose backs the camera can read
+// (markers.js): Clue 2013's cards, with the dagger and pistol.
+export function printedDeck(setup) {
+  const names = CATS.flatMap(cat => cleanList(setup.cards[cat]));
+  const want = Object.keys(CARD_MARKERS);
+  return names.length === want.length && want.every(n => names.includes(n));
 }
 
 export function deckSize(setup) {
@@ -115,6 +140,7 @@ export function validateSetup(setup) {
   const dupCard = all.find((n, i) => allLower.indexOf(n.toLowerCase()) !== i);
   if (dupCard) return `“${dupCard}” is in the card lists twice. Each card needs its own name.`;
   if (all.length - 3 < seats.length) return `There aren’t enough cards for ${seats.length} players. Remove a player or add cards.`;
+  if (setup.dealMode === 'backs' && !printedDeck(setup)) return 'Scanning the card backs needs the printed deck. Choose the Clue (2013) cards, or another way to deal.';
   return null;
 }
 
@@ -146,7 +172,7 @@ export function startGame(state) {
   const g = {
     deck, seats, counts: dealCounts(seats, deck.length - 3),
     dealMode: st.dealMode, robotStyle: st.robotStyle,
-    phase: 'deal', scan: 'pending', envelope: null, solution: null,
+    phase: 'deal', scan: 'pending', envelope: null, solution: null, scanned: null,
     entries: {}, submitted: {}, dealError: null,
     log: [], shown: [], lastBy: null, winner: null,
   };
@@ -311,6 +337,54 @@ export function dispatch(state, deviceId, a, online = new Set()) {
       g.envelope = null; g.scan = 'pending';
       return done();
     }
+    // Dealing by scanning the backs: the host phone scans the rows of cards dealt face-down
+    // (`groups`, each with its rows of { id, centre, axis }, as the scan pieced the table
+    // together), then says whose each row is.
+    case 'scanned': {
+      if (!isHost || !g || g.phase !== 'deal' || g.dealMode !== 'backs') return no('The cards can’t be scanned now.');
+      const rows = [];
+      (Array.isArray(a.groups) ? a.groups : []).forEach((gr, gi) => (gr.rows || []).forEach(row => rows.push({ group: gi, cards: row })));
+      const ids = rows.flatMap(r => r.cards.map(c => c.id));
+      if (!ids.every(id => g.deck.some(c => c.id === id)) || new Set(ids).size !== ids.length) return no('That scan didn’t make sense. Scan the cards again.');
+      const num = v => (Array.isArray(v) && v.length === 2 && v.every(Number.isFinite) ? [v[0], v[1]] : [0, 0]);
+      g.scanned = { rows: rows.map(r => ({ group: r.group, cards: r.cards.map(c => ({ id: c.id, at: num(c.centre), axis: num(c.axis) })) })) };
+      return done();
+    }
+    case 'rescan': {
+      if (!isHost || !g || g.phase !== 'deal' || g.dealMode !== 'backs') return no('Too late to change that.');
+      g.scanned = null;
+      return done();
+    }
+    case 'assign': {
+      if (!isHost || !g || g.phase !== 'deal' || g.dealMode !== 'backs' || !g.scanned) return no('Scan the cards first.');
+      const rows = g.scanned.rows, to = Array.isArray(a.to) ? a.to : [];
+      const found = rows.reduce((t, r) => t + r.cards.length, 0);
+      if (found < g.deck.length) return no(`The scan found ${found} of the ${g.deck.length} cards. Scan them again.`);
+      if (rows.length !== g.seats.length + 1) return no(`The scan found ${rows.length} rows, but there are ${g.seats.length} players and the envelope. Lay the rows out again and scan them.`);
+      if (to.length !== rows.length || to.some(x => !x)) return no('Say whose each row is.');
+      for (const s of g.seats) {
+        const n = to.filter(x => x === s.id).length;
+        if (n !== 1) return no(n ? `Two rows are both ${s.name}’s.` : `None of the rows is ${s.name}’s.`);
+      }
+      const e = to.filter(x => x === 'envelope').length;
+      if (e !== 1) return no(e ? 'Only one row can be the envelope.' : 'Which row is the envelope?');
+      const env = rows[to.indexOf('envelope')].cards.map(c => g.deck.find(d => d.id === c.id));
+      if (env.length !== 3 || !CATS.every(cat => env.filter(c => c.cat === cat).length === 1)) {
+        return no('The envelope’s row has to be one suspect, one weapon and one room, and that row isn’t. Check which row is the envelope.');
+      }
+      g.solution = Object.fromEntries(CATS.map(cat => [cat, env.find(c => c.cat === cat).id]));
+      g.envelope = { ...g.solution };
+      g.scan = 'done';
+      rows.forEach((r, i) => {
+        const s = seat(to[i]);
+        if (!s) return;
+        s.hand = sortHand(g, r.cards.map(c => c.id));
+        g.counts[s.id] = s.hand.length;
+      });
+      g.scanned = null;
+      g.phase = 'play';
+      return done();
+    }
     case 'dealt': {
       if (!isHost || !g || g.phase !== 'deal') return no('The cards can’t be dealt now.');
       if (g.scan === 'pending') return no('Scan the envelope first, or choose to let the app pick the answer.');
@@ -409,6 +483,7 @@ export function modelFor(state, deviceId, online = new Set()) {
     game: g && {
       deck: g.deck, counts: g.counts, dealMode: g.dealMode, robotStyle: g.robotStyle,
       scan: g.scan, submitted: { ...g.submitted }, dealError: g.dealError,
+      scanned: g.scanned && { rows: g.scanned.rows.map(r => ({ group: r.group, cards: r.cards.map(c => ({ at: c.at, axis: c.axis })) })) },
       log: g.log, lastBy: g.lastBy, winner: g.winner,
       answered: g.shown.map(x => x.n),
       solution: over ? g.solution : null,
