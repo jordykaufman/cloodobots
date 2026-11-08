@@ -1,16 +1,21 @@
 // Live scanning of card backs. The camera runs and each frame is read off the main
 // thread. Cards are remembered across frames, so the phone can be held over all of them
 // at once or moved across the table: a card counts once it has been read twice within a
-// few reads. Once no new card has turned up for a second, with every card in view read,
-// the scan locks and hands back the cards and the last frame. Nothing leaves the phone.
+// few reads, and goes on a map of the table pieced together from the views (see
+// table-map.js). Once no new card has turned up for a second, with every card in view
+// read, the scan locks and hands back the cards, the map and the last frame. Nothing
+// leaves the phone.
 
 import { grayOf, readLayout } from './backs.js';
+import { makeTableMap } from './table-map.js';
 
 // A card counts once it has been read twice within this many reads, so one misread
 // frame can't add a card.
 export const CONFIRM_WITHIN = 5;
-// The scan locks once no new card has turned up for this long.
+// The scan locks once no new card has turned up for this long, with the phone held
+// still: the view not moving more than STILL_MM across the table.
 export const SETTLE_MS = 1000;
+export const STILL_MM = 15;
 
 // The reader's result made small enough to post between threads: its working parts
 // dropped, and rows given as positions in the card list (the cards appear in both).
@@ -42,37 +47,55 @@ export const unreadable = r => (r.unread || []).length + Math.ceil((r.loose || [
 //                `unread` counts them, and `small` says the cards look too small to read
 //   collecting - cards in view, some not yet read twice
 //   settling   - every card in view counted; `settle` runs from 0 to 1 over SETTLE_MS
-//   locked     - no new card for SETTLE_MS, every card in view counted
-// Every verdict has `count`, the cards found so far. `found` maps each card's id to
-// where it was last seen.
+//                while the phone is held still (it starts again when the view moves,
+//                so passing over empty table mid-sweep doesn't end the scan)
+//   locked     - no new card, and the phone held still, for SETTLE_MS, with every card
+//                in view counted
+// Every verdict has `count`, the cards found so far, and `map`, the table so far (a
+// snapshot from table-map.js). `found` maps each card's id to where it was last seen in
+// a frame; `map` places the cards on the table. A read's `size` ([w, h]) lets the map
+// show where the view was.
 export function makeTracker() {
-  const sightings = new Map(), found = new Map();
-  let reads = 0, grewAt = null;
+  const sightings = new Map(), found = new Map(), map = makeTableMap();
+  let reads = 0, grewAt = null, still = null;
   return {
     found,
+    map,
     add(res, t) {
-      reads++;
-      const doubled = new Set(res.doubles);
-      for (const c of res.cards) {
-        if (doubled.has(c.id)) continue;
-        const s = sightings.get(c.id) || [];
-        if (!found.has(c.id) && s.some(n => reads - n < CONFIRM_WITHIN)) grewAt = t;
-        if (found.has(c.id) || s.some(n => reads - n < CONFIRM_WITHIN)) found.set(c.id, c);
-        s.push(reads);
-        while (s.length && reads - s[0] >= CONFIRM_WITHIN) s.shift();
-        sightings.set(c.id, s);
-      }
-      const count = found.size, unread = unreadable(res);
-      if (unread || res.doubles.length) {
-        const mm = median(res.cards.concat(res.unread || [], (res.loose || []).filter(m => m.whole)).map(c => c.mm));
-        return { state: 'unclear', count, unread, small: mm > 0 && mm < 3.2 };
-      }
-      if (!res.cards.length) return { state: res.markers.length ? 'partial' : 'nothing', count };
-      if (grewAt === null || res.cards.some(c => !found.has(c.id))) return { state: 'collecting', count };
-      const settle = Math.min(1, (t - grewAt) / SETTLE_MS);
-      return { state: settle >= 1 ? 'locked' : 'settling', count, settle };
+      const verdict = judge(res, t);
+      verdict.map = map.snapshot();
+      return verdict;
     },
   };
+
+  function judge(res, t) {
+    reads++;
+    const doubled = new Set(res.doubles);
+    for (const c of res.cards) {
+      if (doubled.has(c.id)) continue;
+      const s = sightings.get(c.id) || [];
+      if (!found.has(c.id) && s.some(n => reads - n < CONFIRM_WITHIN)) grewAt = t;
+      if (found.has(c.id) || s.some(n => reads - n < CONFIRM_WITHIN)) found.set(c.id, c);
+      s.push(reads);
+      while (s.length && reads - s[0] >= CONFIRM_WITHIN) s.shift();
+      sightings.set(c.id, s);
+    }
+    // Cards that count go on the map, which also says whether the view has moved.
+    map.add(res.cards.filter(c => !doubled.has(c.id) && found.has(c.id) && c.centre && c.axis), res.size);
+    const here = map.where();
+    if (!here || !still || here.group !== still.group || Math.hypot(here.centre[0] - still.centre[0], here.centre[1] - still.centre[1]) > STILL_MM) {
+      still = here && { ...here, since: t };
+    }
+    const count = found.size, unread = unreadable(res);
+    if (unread || res.doubles.length) {
+      const mm = median(res.cards.concat(res.unread || [], (res.loose || []).filter(m => m.whole)).map(c => c.mm));
+      return { state: 'unclear', count, unread, small: mm > 0 && mm < 3.2 };
+    }
+    if (!res.cards.length) return { state: res.markers.length ? 'partial' : 'nothing', count };
+    if (grewAt === null || res.cards.some(c => !found.has(c.id))) return { state: 'collecting', count };
+    const settle = still ? Math.min(1, (t - Math.max(grewAt, still.since)) / SETTLE_MS) : 0;
+    return { state: settle >= 1 ? 'locked' : 'settling', count, settle };
+  }
 }
 
 // Reads frames in a worker, so the camera view stays smooth, or on this thread where
@@ -120,10 +143,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Starts the camera in `video` and reads frames until the scan locks or is stopped.
 // onRead({ verdict, res, w, h, ms, fps, camera }) comes after every read, with the
 // result in the coordinates of the frame read (w x h, which can be smaller than the
-// camera's own frames). onLock({ found, last, canvas, w, h, early }) comes once: the
-// cards found (each where it was last seen), the last read and the frame it was read
-// from; `early` when finish() ended the scan before it locked. onError(error) if the
-// camera or reader fails. Returns { stop(), finish() }.
+// camera's own frames). onLock({ found, map, last, canvas, w, h, early }) comes once:
+// the cards found (each where it was last seen in a frame), the table map, the last
+// read and the frame it was read from; `early` when finish() ended the scan before it
+// locked. onError(error) if the camera or reader fails. Returns { stop(), finish() }.
 export async function startLiveScan({ video, onRead, onLock, onError }) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
@@ -146,7 +169,7 @@ export async function startLiveScan({ video, onRead, onLock, onError }) {
     video.srcObject = null;
     reader.close();
   };
-  const hand = early => onLock({ found: [...tracker.found.values()], last: last && last.res, canvas: last && last.canvas, w: last && last.w, h: last && last.h, early });
+  const hand = early => onLock({ found: [...tracker.found.values()], map: tracker.map.snapshot(), last: last && last.res, canvas: last && last.canvas, w: last && last.w, h: last && last.h, early });
 
   (async () => {
     while (running) {
@@ -160,6 +183,7 @@ export async function startLiveScan({ video, onRead, onLock, onError }) {
       if (!running) break;
       if (!out) continue;
       const res = unslim(out.res);
+      res.size = [w, h];
       last = { res, canvas: f.canvas, w, h };
       turn = 1 - turn;
       const now = performance.now();

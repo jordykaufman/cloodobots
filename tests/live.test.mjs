@@ -5,10 +5,13 @@ import { readLayout, CARD_SIZES } from '../js/backs.js';
 import { CARD_MARKERS } from '../js/markers.js';
 import { paintBezels } from './paint.mjs';
 
-const card = (id, mm = 7) => ({ id, centre: [0, 0], mm, markers: 4, ring: { c: [0, 0], M: [mm, 0, 0, mm] } });
-const read = ({ cards = [], unread = [], markers = [{ id: 34 }], doubles = [], loose = [] } = {}) => ({ cards, unread, markers, doubles, loose, rows: [cards] });
+// A card where the reader would see it: each in its own place, the same in every read.
+const card = (id, mm = 7) => ({ id, centre: [100 + (id % 5) * 70 * mm, 120 + Math.floor(id / 5) * 100 * mm], axis: [0, 1], mm, markers: 4, ring: { c: [0, 0], M: [mm, 0, 0, mm] } });
+const read = ({ cards = [], unread = [], markers = [{ id: 34 }], doubles = [], loose = [] } = {}) => ({ cards, unread, markers, doubles, loose, rows: [cards], size: [1440, 2160] });
 const seen = (...ids) => read({ cards: ids.map(id => card(id)) });
 const counted = tracker => [...tracker.found.keys()].sort((a, b) => a - b);
+// A verdict without the map it carries.
+const plain = ({ map, ...v }) => v;
 
 // Feeds reads to a tracker, one every `gap` ms, and returns the last verdict.
 function feed(tracker, reads, start = 0, gap = 200) {
@@ -25,7 +28,7 @@ test('says when there is nothing to see, or only card corners', () => {
 
 test('counts a card once it has been read twice, then locks when nothing new turns up for a second', () => {
   const t = makeTracker();
-  assert.deepEqual(t.add(seen(3, 8), 0), { state: 'collecting', count: 0 });
+  assert.deepEqual(plain(t.add(seen(3, 8), 0)), { state: 'collecting', count: 0 });
   assert.equal(t.add(seen(3, 8), 200).state, 'settling');
   assert.deepEqual(counted(t), [3, 8]);
   const v = t.add(seen(3, 8), 200 + SETTLE_MS / 2);
@@ -61,7 +64,7 @@ test('never locks while a card in view can’t be read, and says how to fix it',
   const t = makeTracker();
   feed(t, [seen(3, 8), seen(3, 8)]);
   const blurred = read({ cards: [card(3)], unread: [{ centre: [0, 0], mm: 7, ring: {} }] });
-  assert.deepEqual(t.add(blurred, 5000), { state: 'unclear', count: 2, unread: 1, small: false });
+  assert.deepEqual(plain(t.add(blurred, 5000)), { state: 'unclear', count: 2, unread: 1, small: false });
   // Corner marks of a card whose compass glare has washed out.
   const mark = whole => ({ centre: [0, 0], mm: 7, whole });
   const washed = read({ cards: [card(3), card(8)], loose: [mark(true), mark(true), mark(true), mark(true)] });
@@ -94,4 +97,23 @@ test('a reading survives the trip from the worker, and counts', () => {
   assert.equal(feed(t, [back, back, back, back, back, back, back]).state, 'locked');
   const nameOf = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
   assert.deepEqual(counted(t).map(id => nameOf[id]).sort(), names.slice().sort());
+});
+
+test('doesn’t lock while the phone is moving, even with nothing new in view', () => {
+  const t = makeTracker();
+  feed(t, [seen(3, 8), seen(3, 8)]);
+  // The same two cards, sliding across the picture as the phone moves: 7 mm a read.
+  let v;
+  for (let i = 1; i <= 10; i++) {
+    const moved = seen(3, 8);
+    moved.cards.forEach(c => { c.centre = [c.centre[0], c.centre[1] - i * 7 * 7]; });
+    v = t.add(moved, 400 + i * 200);
+  }
+  assert.equal(v.state, 'settling');
+  assert.ok(v.settle < 0.5, `settle ${v.settle}`);
+  // Held still: it locks a second later.
+  const held = seen(3, 8);
+  held.cards.forEach(c => { c.centre = [c.centre[0], c.centre[1] - 70 * 7]; });
+  assert.equal(t.add(held, 2600).state, 'settling');
+  assert.equal(t.add(held, 2600 + SETTLE_MS).state, 'locked');
 });

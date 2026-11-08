@@ -42,6 +42,7 @@ async function loadPhoto(file) {
 
 function draw(photo, res) {
   const shot = $('shot');
+  shot.style.height = '';
   const scale = Math.min(1, 1600 / Math.max(photo.w, photo.h));
   shot.width = Math.round(photo.w * scale);
   shot.height = Math.round(photo.h * scale);
@@ -88,13 +89,21 @@ function draw(photo, res) {
   }));
 }
 
-function show(photo, res, how) {
+// Shows what was found. `res.groups`, from a live scan, holds the table's separate
+// groups of cards, each with its rows; with `map`, the picture is the table as the scan
+// pieced it together instead of the photo.
+function show(photo, res, how, map) {
   const cards = res.cards.filter(c => NAME[c.id]);
   const tests = new Set(res.markers.map(m => m.id).filter(isTest));
-  const rows = res.rows.map(r => r.filter(c => NAME[c.id])).filter(r => r.length);
+  const groups = (res.groups || [{ rows: res.rows }])
+    .map(g => ({ ...g, rows: g.rows.map(r => r.filter(c => NAME[c.id])).filter(r => r.length) })).filter(g => g.rows.length);
+  const rows = groups.flatMap(g => g.rows), placed = groups.filter(g => !g.unplaced).length;
 
   let summary;
-  if (cards.length) summary = `Found ${cards.length} of ${Object.keys(CARD_MARKERS).length} cards${rows.length > 1 ? `, in ${rows.length} rows` : ''}.`;
+  if (cards.length) {
+    summary = `Found ${cards.length} of ${Object.keys(CARD_MARKERS).length} cards` +
+      (rows.length > 1 ? `, in ${rows.length} rows` : '') + (placed > 1 ? ` across ${placed} separate groups` : '') + '.';
+  }
   else if (tests.size) summary = `Read ${tests.size} of ${SIZES.length * SHADES.length} size test markers.`;
   else summary = 'No markers found. Try again closer, with the cards filling most of the photo.';
   $('summary').textContent = summary;
@@ -114,9 +123,10 @@ function show(photo, res, how) {
   $('quality').hidden = !quality;
 
   $('rowsBox').hidden = !rows.length;
-  $('rowsTitle').textContent = rows.length > 1 ? 'Rows, from the top of the photo' : 'Cards found';
-  $('rows').innerHTML = rows.map((row, r) => `<li><p class="label">Row ${r + 1} · ${row.length} card${row.length === 1 ? '' : 's'}</p>
-    <p class="entry-cards">${row.map(c => `<span class="cc"><span>${esc(NAME[c.id])}</span></span>`).join('')}</p></li>`).join('');
+  $('rowsTitle').textContent = res.groups ? 'Rows on the table' : rows.length > 1 ? 'Rows, from the top of the photo' : 'Cards found';
+  const rowName = (g, gi, r) => g.unplaced ? 'Counted, not placed on the map' : `${placed > 1 ? `Group ${gi + 1} · row` : 'Row'} ${r + 1}`;
+  $('rows').innerHTML = groups.map((g, gi) => g.rows.map((row, r) => `<li><p class="label">${rowName(g, gi, r)} · ${row.length} card${row.length === 1 ? '' : 's'}</p>
+    <p class="entry-cards">${row.map(c => `<span class="cc"><span>${esc(NAME[c.id])}</span></span>`).join('')}</p></li>`).join('')).join('');
 
   $('sizesBox').hidden = !tests.size;
   $('sizes').innerHTML = `<tr><th scope="col"></th>${SIZES.map(s => `<th scope="col">${s} mm</th>`).join('')}</tr>` +
@@ -124,9 +134,12 @@ function show(photo, res, how) {
       ? '<td class="yes">read</td>' : '<td class="no">–</td>').join('')}</tr>`).join('');
 
   $('results').hidden = false;
-  draw(photo, res);
+  $('shotTitle').textContent = map ? 'The table, as the scan pieced it together' : 'What the reader saw';
+  $('shotKey').hidden = !!map;
+  if (map) paintMap($('shot'), map, { names: true, width: $('shot').parentElement.clientWidth });
+  else draw(photo, res);
   $('status').textContent = how;
-  return [summary, ...notes, quality, ...rows.map((row, r) => `Row ${r + 1}: ${row.map(c => NAME[c.id]).join(', ')}`)].join('\n');
+  return [summary, ...notes, quality, ...groups.flatMap((g, gi) => g.rows.map((row, r) => `${rowName(g, gi, r)}: ${row.map(c => NAME[c.id]).join(', ')}`))].join('\n');
 }
 
 const stamp = () => {
@@ -201,6 +214,78 @@ function startOver() {
   $('tally').hidden = true;
   $('results').hidden = true;
   $('status').textContent = 'Started over.';
+}
+
+/* ---------- the table map ---------- */
+
+// Draws the table as a live scan has pieced it together: each group's cards as card
+// shapes, groups side by side, scaled to fit. `inView` marks the cards the camera sees
+// now (drawn brighter), and the last view's outline is drawn round them. With `names`,
+// each card is labelled. `width` and `height` are in CSS pixels; without `height`, the
+// canvas takes the map's own shape.
+const MAP_CARD = { w: 56, h: 87 };
+function paintMap(cv, map, { names = false, inView = new Set(), width = cv.clientWidth, height = null } = {}) {
+  const dpr = window.devicePixelRatio || 1, GAP = 40, PAD = 8;
+  const corners = c => {
+    const [ax, ay] = c.axis, px = -ay, py = ax;
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [
+      c.centre[0] + a * px * MAP_CARD.w / 2 + b * ax * MAP_CARD.h / 2,
+      c.centre[1] + a * py * MAP_CARD.w / 2 + b * ay * MAP_CARD.h / 2]);
+  };
+  const groups = map ? map.groups.filter(g => g.cards.length) : [];
+  const boxes = groups.map(g => {
+    const pts = g.cards.flatMap(corners).concat(g.current && map.view ? map.view : []);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  });
+  const totalW = boxes.reduce((t, b) => t + b.x1 - b.x0, 0) + GAP * Math.max(0, boxes.length - 1);
+  const maxH = Math.max(1, ...boxes.map(b => b.y1 - b.y0));
+  const h = height || Math.min(Math.max(120, (width - 2 * PAD) * maxH / Math.max(1, totalW) + 2 * PAD), 1.4 * width);
+  cv.width = Math.round(width * dpr);
+  cv.height = Math.round(h * dpr);
+  if (!height) cv.style.height = `${Math.round(h)}px`;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, h);
+  if (!groups.length) return;
+  const k = Math.min((width - 2 * PAD) / Math.max(1, totalW), (h - 2 * PAD) / maxH);
+  let ox = (width - totalW * k) / 2;
+  groups.forEach((g, gi) => {
+    const b = boxes[gi], oy = (h - (b.y1 - b.y0) * k) / 2;
+    const P = ([x, y]) => [ox + (x - b.x0) * k, oy + (y - b.y0) * k];
+    const path = pts => { ctx.beginPath(); pts.map(P).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
+    for (const c of g.cards) {
+      path(corners(c));
+      ctx.fillStyle = names ? '#141B2A' : inView.has(c.id) ? '#3DDC84' : 'rgba(61, 220, 132, .4)';
+      ctx.fill();
+      if (names) { ctx.strokeStyle = '#D9B46A'; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+    if (g.current && map.view && !names) {
+      path(map.view);
+      ctx.strokeStyle = 'rgba(255, 255, 255, .85)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    if (names) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#E8C478';
+      // Each name as large as fits across its card.
+      for (const c of g.cards) {
+        const text = NAME[c.id] || `#${c.id}`, [x, y] = P(c.centre);
+        ctx.font = '700 10px Figtree, system-ui, sans-serif';
+        const size = Math.max(6, Math.min(14, 10 * 0.86 * MAP_CARD.w * k / ctx.measureText(text).width));
+        ctx.font = `700 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
+        ctx.fillText(text, x, y);
+      }
+      if (groups.length > 1) {
+        ctx.fillStyle = '#566173';
+        ctx.font = '700 12px Figtree, system-ui, sans-serif';
+        ctx.fillText(`Group ${gi + 1}`, ox + (b.x1 - b.x0) * k / 2, Math.max(10, oy - 10));
+      }
+    }
+    ox += (b.x1 - b.x0 + GAP) * k;
+  });
 }
 
 /* ---------- live scan ---------- */
@@ -317,18 +402,16 @@ function stopLive(message) {
   if (message) $('status').textContent = message;
 }
 
-// What the scan found, laid out for the results: the cards in the last frame where
-// they lie in it, and any found earlier, in other views, in a list.
-function scanResult(found, last) {
-  const ids = new Set(found.map(c => c.id));
-  const here = new Map((last ? last.cards : []).filter(c => ids.has(c.id)).map(c => [c.id, c]));
-  const order = Object.values(CARD_MARKERS);
-  const cards = found.map(c => here.get(c.id) || { id: c.id, centre: null, ring: null, contrast: c.contrast, errors: c.errors })
-    .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-  const rows = here.size === found.length && last
-    ? last.rows.map(r => r.filter(c => ids.has(c.id))).filter(r => r.length)
-    : [cards];
-  return { markers: last ? last.markers : [], cards, unread: last ? last.unread : [], loose: last ? last.loose : [], doubles: [], rows };
+// What the scan found, laid out for the results: the groups of cards on the map, each
+// with its rows, and any card counted but never placed on the map.
+function scanResult(found, final, map) {
+  const byId = new Map(found.map(c => [c.id, c]));
+  const groups = (map ? map.groups : []).map(g => ({ rows: g.rows.map(r => r.filter(id => byId.has(id)).map(id => byId.get(id))).filter(r => r.length) }))
+    .filter(g => g.rows.length);
+  const placed = new Set(groups.flatMap(g => g.rows.flat().map(c => c.id)));
+  const unplaced = found.filter(c => !placed.has(c.id));
+  if (unplaced.length) groups.push({ rows: [unplaced], unplaced: true });
+  return { markers: final ? final.markers : [], cards: found, unread: final ? final.unread : [], loose: final ? final.loose : [], doubles: [], rows: groups.flatMap(g => g.rows), groups };
 }
 
 async function startLive() {
@@ -347,6 +430,7 @@ async function startLive() {
   $('liveInfo').textContent = '';
   $('settle').style.width = '0';
   drawOverlay(null);
+  paintMap($('minimap'), null, { width: $('minimap').clientWidth || 300, height: 84 });
   keepAwake();
   try {
     live = await startLiveScan({
@@ -354,20 +438,22 @@ async function startLive() {
       onRead({ verdict, res, w, h, fps, camera }) {
         drawOverlay(res, w, h);
         $('liveStatus').textContent = describe(verdict);
-        $('liveCount').textContent = verdict.count ? `${plural(verdict.count, 'card')}` : '';
+        const groups = verdict.map ? verdict.map.groups.length : 0;
+        $('liveCount').textContent = verdict.count ? `${plural(verdict.count, 'card')}${groups > 1 ? ` · ${groups} groups` : ''}` : '';
+        paintMap($('minimap'), verdict.map, { inView: new Set(res.cards.map(c => c.id)), width: $('minimap').clientWidth, height: $('minimap').clientHeight });
         $('settle').style.width = `${Math.round((verdict.settle || (verdict.state === 'locked' ? 1 : 0)) * 100)}%`;
         $('liveInfo').textContent = `Camera ${camera[0]} × ${camera[1]} · ${fps ? fps.toFixed(1) : '…'} reads a second`;
       },
-      onLock({ found, last: final, canvas, w, h, early }) {
+      onLock({ found, map, last: final, canvas, w, h, early }) {
         live = null;
         closeScanner();
         // Cards found means frames were read, so there is a last frame to show.
         if (!found.length || !final) { $('status').textContent = 'No cards were counted. Try again a little closer.'; return; }
         if (!early) chime();
         last = null;
-        const res = scanResult(found, final);
+        const res = scanResult(found, final, map);
         const text = show({ canvas, w, h }, res, early ? `Finished by hand with ${plural(found.length, 'card')} counted.`
-          : 'Locked: no new card turned up for a second, and every card in view was read.');
+          : 'Locked: no new card turned up for a second, and every card in view was read.', map);
         addToTally(res);
         canvas.toBlob(b => { if (b) last = { file: new File([b], 'live-scan.jpg', { type: 'image/jpeg' }), text }; }, 'image/jpeg', 0.92);
         $('results').scrollIntoView({ block: 'start', behavior: 'smooth' });
