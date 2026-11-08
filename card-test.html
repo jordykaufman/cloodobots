@@ -73,6 +73,7 @@ html.scanning, html.scanning body { overflow: hidden; }
     <input type="file" id="camera" accept="image/*" capture="environment" hidden>
     <input type="file" id="library" accept="image/*" hidden>
     <p class="hint" id="status" role="status">Tip: tilt the phone a little away from straight down so the light’s reflection misses the cards. No flash.</p>
+    <p class="hint" id="version"></p>
   </section>
   <div class="scanner" id="live" hidden>
     <div class="scanner-top">
@@ -85,7 +86,7 @@ html.scanning, html.scanning body { overflow: hidden; }
     </div>
     <div class="scanner-bottom">
       <canvas class="minimap" id="minimap" aria-hidden="true"></canvas>
-      <p class="scanner-info" id="mapKey" hidden>On the map, green cards are counted; the white box is where the camera is.</p>
+      <p class="scanner-info" id="mapKey" hidden>On the map, each green card has been identified; the white box is where the camera is.</p>
       <div class="settle" aria-hidden="true"><span id="settle"></span></div>
       <p class="scanner-info" id="liveInfo"></p>
       <div class="scanner-buttons">

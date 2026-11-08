@@ -5,6 +5,7 @@ import { grayOf, readLayout } from './backs.js';
 import { CARD_MARKERS, DECOY, REG_MARK } from './markers.js';
 import { startLiveScan } from './live-scan.js';
 import { esc, keepAwake } from './util.js';
+import { UPDATED } from './version.js';
 
 const NAME = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
 const FIRST_TEST = 22, SIZES = [6, 8, 10, 12], SHADES = [100, 75, 50];
@@ -108,8 +109,11 @@ function show(photo, res, how, map) {
   else summary = 'No markers found. Try again closer, with the cards filling most of the photo.';
   $('summary').textContent = summary;
 
-  // Problems, in red; which cards haven't been seen at all is in the tally.
+  // Problems, in red; which cards haven't been seen at all is in the tally. Once every
+  // card in the deck has been found, cards a picture couldn't read are no problem.
   const notes = [];
+  const everything = cards.length >= Object.keys(CARD_MARKERS).length;
+  if (everything) { res = { ...res, unread: [], loose: [] }; }
   if (res.unread && res.unread.length) notes.push(`${res.unread.length} card${res.unread.length === 1 ? '' : 's'} seen but not named: the ring didn’t match any card.`);
   const hidden = Math.ceil((res.loose || []).filter(m => m.whole).length / 4 - 0.25);
   if (hidden) notes.push(`${hidden} card${hidden === 1 ? '' : 's'} with corner marks but no compass the reader could find, probably under glare.`);
@@ -328,17 +332,16 @@ function describe(v) {
     case 'collecting': return 'Reading the cards…';
     case 'settling': return expected() ? `Got the cards in view.${toGo(v)} Move on to the rest.` : 'Got the cards in view. Hold still to finish, or move on to more.';
     case 'locked': return 'Done.';
-    default: return v.count ? `No cards in view.${toGo(v) || ' Point at the ones not counted yet.'}` : 'Point the camera at the cards, lying face-down.';
+    default: return v.count ? `No cards in view.${toGo(v) || ' Point at the ones not counted yet.'}` : 'Point the camera at the cards, lying face-down. Each gets a green tick once it’s identified.';
   }
 }
 
-// Draws what the last read found over the camera view: each card's corner marks, its
-// circle and its name: green with a tick once it counts, white while it's been read but
-// not counted yet (a rough read, waiting for a second), red when its ring couldn't be
-// read. Counted cards keep their tick and name where the map puts them in this view,
-// read again or not. A read
-// describes a frame from a moment ago, so while the phone moves the drawing trails the
-// cards: it fades unless a fresh read replaces it, after a bit longer than reads take.
+// Draws one mark on each card in the camera view: a green tick and its name once the card
+// is identified, grey "…" while it's still being read, red "?" when it can't be read
+// (glare or blur). Identified cards keep their tick wherever the map puts them in this
+// view, whether or not this read saw them. A read describes a frame from a moment ago,
+// so while the phone moves the marks trail the cards: they fade unless a fresh read
+// replaces them, after a bit longer than reads take.
 let readGap = 300, lastDraw = 0;
 function drawOverlay(res, fw, fh, counted = new Set(), map = null) {
   const video = $('video'), cv = $('overlay');
@@ -362,34 +365,25 @@ function drawOverlay(res, fw, fh, counted = new Set(), map = null) {
   // The video is shown whole, so work out where the frame sits in its box.
   const s = Math.min(cw / fw, ch / fh), ox = (cw - fw * s) / 2, oy = (ch - fh * s) / 2;
   const P = ([x, y]) => [ox + x * s, oy + y * s];
-  const path = pts => { ctx.beginPath(); pts.forEach((p, i) => { const [x, y] = P(p); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }); ctx.closePath(); };
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(232, 196, 120, .95)';
-  for (const m of res.markers) { path(m.corners); ctx.stroke(); }
-  const circle = ({ c, M }) => path(Array.from({ length: 48 }, (_, k) => {
-    const t = k * Math.PI / 24, u = 16 * Math.sin(t), v = -16 * Math.cos(t);
-    return [c[0] + M[0] * u + M[1] * v, c[1] + M[2] * u + M[3] * v];
-  }));
-  ctx.lineWidth = 3;
-  for (const card of res.cards) if (card.ring) { ctx.strokeStyle = counted.has(card.id) ? '#3DDC84' : '#FFFFFF'; circle(card.ring); ctx.stroke(); }
-  ctx.strokeStyle = '#FF5A4E';
-  for (const card of res.unread) if (card.ring) { circle(card.ring); ctx.stroke(); }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // Names sized to fit across their card.
-  const label = (text, [x, y], colour, mm) => {
-    const size = Math.max(8, Math.min(13, 50 * mm * s / 7));
-    ctx.font = `700 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
-    const w = ctx.measureText(text).width + size;
-    ctx.fillStyle = 'rgba(14, 19, 27, .85)';
-    ctx.fillRect(x - w / 2, y - size * 0.85, w, size * 1.7);
-    ctx.fillStyle = colour;
+  // A rounded badge, sized to suit the card it sits on.
+  const badge = (text, [x, y], fill, mm) => {
+    const size = Math.max(9, Math.min(15, 60 * mm * s / 7));
+    ctx.font = `800 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
+    const w = ctx.measureText(text).width + size * 1.3, h = size * 1.9;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2); else ctx.rect(x - w / 2, y - h / 2, w, h);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
     ctx.fillText(text, x, y + 1);
   };
+  const GREEN = '#1F9D55', GREY = 'rgba(55, 62, 74, .92)', RED = '#D93A2B';
   const name = id => NAME[id] || `#${id}`;
-  for (const c of res.cards) label(counted.has(c.id) ? `✓ ${name(c.id)}` : name(c.id), P(c.centre), counted.has(c.id) ? '#3DDC84' : '#FFFFFF', c.mm);
-  for (const u of res.unread) label('?', P(u.centre), '#FF5A4E', u.mm);
-  // Counted cards not read in this frame, where the map says they are.
+  for (const c of res.cards) badge(counted.has(c.id) ? `✓ ${name(c.id)}` : '…', P(c.centre), counted.has(c.id) ? GREEN : GREY, c.mm);
+  for (const u of res.unread) badge('?', P(u.centre), RED, u.mm);
+  // Identified cards this read didn't see, where the map says they are.
   const group = map && map.frame && map.groups.find(g => g.current);
   if (group) {
     const here = new Set(res.cards.map(c => c.id)), ppm = map.frame.ppm;
@@ -397,7 +391,7 @@ function drawOverlay(res, fw, fh, counted = new Set(), map = null) {
       if (here.has(c.id)) continue;
       const [x, y] = map.frame.toFrame(c.centre);
       if (x < 0 || y < 0 || x > fw || y > fh) continue;
-      label(`✓ ${name(c.id)}`, P([x, y]), '#3DDC84', ppm);
+      badge(`✓ ${name(c.id)}`, P([x, y]), GREEN, ppm);
     }
   }
 }
@@ -526,6 +520,8 @@ if (!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices
   $('status').textContent = 'Live scanning needs the camera, which this browser won’t give this page. Take a photo instead.';
 }
 setupExpect();
+// Which version of the page this is, as when it was last updated, in local time.
+$('version').textContent = `This page was last updated ${new Date(UPDATED).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.`;
 $('scanLive').addEventListener('click', startLive);
 $('scanMore').addEventListener('click', startLive);
 $('stopLive').addEventListener('click', () => stopLive('Cancelled.'));
