@@ -29,7 +29,7 @@ export function slim(res) {
     markers: res.markers.map(m => ({ id: m.id, corners: m.corners, centre: m.centre })),
     cards: res.cards.map(c => ({ id: c.id, centre: c.centre, axis: c.axis, mm: c.mm, markers: c.markers, ring: c.ring, contrast: c.contrast, errors: c.errors })),
     unread: (res.unread || []).map(u => ({ centre: u.centre, axis: u.axis, mm: u.mm, markers: u.markers, ring: u.ring, contrast: u.contrast })),
-    loose: (res.loose || []).map(m => ({ centre: m.centre, mm: m.mm, whole: m.whole })),
+    loose: (res.loose || []).map(m => (m.card ? { centre: m.centre, mm: m.mm, whole: m.whole, card: m.card } : { centre: m.centre, mm: m.mm, whole: m.whole })),
     doubles: res.doubles,
     rows: res.rows.map(row => row.map(c => res.cards.indexOf(c))),
   };
@@ -39,17 +39,35 @@ export const unslim = s => ({ ...s, rows: s.rows.map(row => row.map(i => s.cards
 
 const median = xs => { const s = xs.slice().sort((a, b) => a - b); return s.length ? s[s.length >> 1] : 0; };
 
-// Cards in view that couldn't be read: rings that matched no card, and corner marks
-// with no card read round them where a whole card would be in the picture (glare can
-// wash out a card's circle and leave its corners; three or four such marks make a card).
-export const unreadable = r => (r.unread || []).length + Math.ceil((r.loose || []).filter(m => m.whole).length / 4 - 0.25);
+// Cards in view that couldn't be read, each { centre, axis, mm } in the read's pixels:
+// rings that matched no card, and corner marks with no card read round them where a
+// whole card would be in the picture (glare can wash out a card's circle and leave its
+// corners), one for each card those marks make.
+export function straysOf(r) {
+  const out = (r.unread || []).map(u => ({ centre: u.centre, axis: u.axis || null, mm: u.mm }));
+  const washed = [];
+  for (const m of (r.loose || []).filter(m => m.whole)) {
+    const at = m.card ? m.card.centre : m.centre;
+    const same = washed.find(s => Math.hypot(s.centre[0] - at[0], s.centre[1] - at[1]) < 20 * m.mm);
+    if (same) { same.marks++; continue; }
+    washed.push({ centre: at, axis: m.card ? m.card.axis : null, mm: m.mm, marks: 1 });
+  }
+  // Without the card's place, four marks to a card.
+  for (const s of washed) {
+    const n = s.marks > 4 ? Math.ceil(s.marks / 4 - 0.25) : 1;
+    for (let i = 0; i < n; i++) out.push({ centre: s.centre, axis: s.axis, mm: s.mm });
+  }
+  return out;
+}
+export const unreadable = r => straysOf(r).length;
 
 // Keeps track of a scan, read by read; `expected` is how many cards to find (0: not
 // known). add(res, t) takes each read (t in milliseconds) and says where the scan stands:
 //   nothing    - nothing like a card in view
 //   partial    - card marks in view, but no whole card
-//   unclear    - cards in view that couldn't be read (through glare, blur or distance);
-//                `unread` counts them, and `small` says the cards look too small to read
+//   unclear    - cards in view that couldn't be read (through glare, blur or distance),
+//                other than cards already found; `unread` counts them, and `small` says
+//                the cards look too small to read
 //   collecting - cards in view, some not yet read twice
 //   settling   - every card in view counted; not knowing how many to find, `settle`
 //                runs from 0 to 1 over SETTLE_MS while the phone is held still (it starts
@@ -58,19 +76,21 @@ export const unreadable = r => (r.unread || []).length + Math.ceil((r.loose || [
 //   locked     - every card expected found (`complete`); or, not knowing how many,
 //                no new card and the phone held still for SETTLE_MS, with every card in
 //                view counted
-// Every verdict has `count` and `ids`, the cards found so far, and `map`, the table so
-// far (a snapshot from table-map.js). `found` maps each card's id to where it was last seen in
-// a frame; `map` places the cards on the table. A read's `size` ([w, h]) lets the map
-// show where the view was.
+// Every verdict has `count` and `ids`, the cards found so far, `strays`, the cards in
+// view that couldn't be read and aren't among those found ({ centre, axis, mm } in the
+// read's pixels), and `map`, the table so far (a snapshot from table-map.js). `found`
+// maps each card's id to where it was last seen in a frame; `map` places the cards on the
+// table. A read's `size` ([w, h]) lets the map show where the view was.
 export function makeTracker({ expected = 0 } = {}) {
   const sightings = new Map(), found = new Map(), map = makeTableMap();
-  let reads = 0, grewAt = null, still = null;
+  let reads = 0, grewAt = null, still = null, strays = [];
   return {
     found,
     map,
     add(res, t) {
       const verdict = judge(res, t);
       verdict.ids = [...found.keys()];
+      verdict.strays = strays;
       verdict.map = map.snapshot();
       return verdict;
     },
@@ -89,13 +109,16 @@ export function makeTracker({ expected = 0 } = {}) {
       while (s.length && reads - s[0] >= CONFIRM_WITHIN) s.shift();
       sightings.set(c.id, s);
     }
-    // Cards that count go on the map, which also says whether the view has moved.
-    map.add(res.cards.filter(c => !doubled.has(c.id) && found.has(c.id) && c.centre && c.axis), res.size);
+    // Cards that count go on the map, which also says whether the view has moved, and
+    // which of the cards that couldn't be read are ones already found.
+    const all = straysOf(res);
+    map.add(res.cards.filter(c => !doubled.has(c.id) && found.has(c.id) && c.centre && c.axis), res.size, all);
+    strays = map.unknown(all);
     const here = map.where();
     if (!here || !still || here.group !== still.group || Math.hypot(here.centre[0] - still.centre[0], here.centre[1] - still.centre[1]) > STILL_MM) {
       still = here && { ...here, since: t };
     }
-    const count = found.size, unread = unreadable(res);
+    const count = found.size, unread = strays.length;
     if (expected && count >= expected) return { state: 'locked', count, complete: true };
     if (unread || res.doubles.length) {
       const mm = median(res.cards.concat(res.unread || [], (res.loose || []).filter(m => m.whole)).map(c => c.mm));

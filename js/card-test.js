@@ -110,13 +110,22 @@ function show(photo, res, how, map) {
   $('summary').textContent = summary;
 
   // Problems, in red; which cards haven't been seen at all is in the tally. Once every
-  // card in the deck has been found, cards a picture couldn't read are no problem.
+  // card in the deck has been found, cards a picture couldn't read are no problem. A live
+  // scan says which cards it saw but never identified (`waiting`, from its map) rather
+  // than what its last frame couldn't read.
   const notes = [];
   const everything = cards.length >= Object.keys(CARD_MARKERS).length;
-  if (everything) { res = { ...res, unread: [], loose: [] }; }
-  if (res.unread && res.unread.length) notes.push(`${res.unread.length} card${res.unread.length === 1 ? '' : 's'} seen but not named: the ring didn’t match any card.`);
-  const hidden = Math.ceil((res.loose || []).filter(m => m.whole).length / 4 - 0.25);
-  if (hidden) notes.push(`${hidden} card${hidden === 1 ? '' : 's'} with corner marks but no compass the reader could find, probably under glare.`);
+  if (everything) {
+    res = { ...res, unread: [], loose: [], waiting: res.waiting && [] };
+    if (map) map = { ...map, groups: map.groups.map(g => ({ ...g, waiting: [] })) };
+  }
+  if (res.waiting) {
+    if (res.waiting.length) notes.push(`${res.waiting.length} card${res.waiting.length === 1 ? '' : 's'} seen but never identified: marked ? on the table below.`);
+  } else {
+    if (res.unread && res.unread.length) notes.push(`${res.unread.length} card${res.unread.length === 1 ? '' : 's'} seen but not named: the ring didn’t match any card.`);
+    const hidden = Math.ceil((res.loose || []).filter(m => m.whole).length / 4 - 0.25);
+    if (hidden) notes.push(`${hidden} card${hidden === 1 ? '' : 's'} with corner marks but no compass the reader could find, probably under glare.`);
+  }
   if (res.doubles.length) notes.push(`Seen twice in different places: ${res.doubles.map(id => NAME[id] || `marker ${id}`).join(', ')}.`);
   $('missing').textContent = notes.join(' ');
   $('missing').hidden = !notes.length;
@@ -223,10 +232,11 @@ function startOver() {
 /* ---------- the table map ---------- */
 
 // Draws the table as a live scan has pieced it together: each group's cards as card
-// shapes (every one counted, so all green), groups side by side, scaled to fit, with a
-// white box for where the camera is. With `names`,
-// each card is labelled. `width` and `height` are in CSS pixels; without `height`, the
-// canvas takes the map's own shape.
+// shapes, groups side by side, scaled to fit the cards. While scanning, identified cards
+// are green, cards seen but not read yet are red outlines, and a white box shows where
+// the camera is (cut off where it runs past the cards, so the map doesn't jump about as
+// the phone moves). With `names`, each card is labelled. `width` and `height` are in CSS
+// pixels; without `height`, the canvas takes the map's own shape.
 const MAP_CARD = { w: 56, h: 87 };
 function paintMap(cv, map, { names = false, width = cv.clientWidth, height = null } = {}) {
   const dpr = window.devicePixelRatio || 1, GAP = 40, PAD = 8;
@@ -236,9 +246,9 @@ function paintMap(cv, map, { names = false, width = cv.clientWidth, height = nul
       c.centre[0] + a * px * MAP_CARD.w / 2 + b * ax * MAP_CARD.h / 2,
       c.centre[1] + a * py * MAP_CARD.w / 2 + b * ay * MAP_CARD.h / 2]);
   };
-  const groups = map ? map.groups.filter(g => g.cards.length) : [];
+  const groups = map ? map.groups.filter(g => g.cards.length || g.waiting.length) : [];
   const boxes = groups.map(g => {
-    const pts = g.cards.flatMap(corners).concat(g.current && map.view ? map.view : []);
+    const pts = g.cards.concat(g.waiting).flatMap(corners);
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
   });
@@ -252,7 +262,8 @@ function paintMap(cv, map, { names = false, width = cv.clientWidth, height = nul
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, h);
   if (!groups.length) return;
-  const k = Math.min((width - 2 * PAD) / Math.max(1, totalW), (h - 2 * PAD) / maxH);
+  // While only a few cards are found, they're drawn no bigger than this.
+  const k = Math.min((width - 2 * PAD) / Math.max(1, totalW), (h - 2 * PAD) / maxH, names ? Infinity : (h - 2 * PAD) / (2.5 * MAP_CARD.h));
   let ox = (width - totalW * k) / 2;
   groups.forEach((g, gi) => {
     const b = boxes[gi], oy = (h - (b.y1 - b.y0) * k) / 2;
@@ -263,6 +274,14 @@ function paintMap(cv, map, { names = false, width = cv.clientWidth, height = nul
       ctx.fillStyle = names ? '#141B2A' : '#3DDC84';
       ctx.fill();
       if (names) { ctx.strokeStyle = '#D9B46A'; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+    for (const c of g.waiting) {
+      path(corners(c));
+      ctx.setLineDash(names ? [4, 3] : []);
+      ctx.strokeStyle = '#FF5A4E';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     if (g.current && map.view && !names) {
       path(map.view);
@@ -282,6 +301,10 @@ function paintMap(cv, map, { names = false, width = cv.clientWidth, height = nul
         ctx.font = `700 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
         ctx.fillText(text, x, y);
       }
+      ctx.fillStyle = '#FF5A4E';
+      ctx.font = '800 14px Figtree, system-ui, sans-serif';
+      for (const c of g.waiting) ctx.fillText('?', ...P(c.centre));
+      ctx.fillStyle = '#E8C478';
       if (groups.length > 1) {
         ctx.fillStyle = '#566173';
         ctx.font = '700 12px Figtree, system-ui, sans-serif';
@@ -322,6 +345,25 @@ function toGo(v) {
   return names.length <= 4 ? ` Still to find: ${names.join(', ')}.` : ` ${left} to go.`;
 }
 
+// The line at the top says what most of the last few reads made of the view, and stays
+// up for at least HOLD_MS: one read that misses a card, or catches a reflection,
+// shouldn't make it flicker. A read that finds a new card has its say at once.
+const HOLD_MS = 800, LATELY_MS = 700;
+let said = null, lately = [];
+function steady(v, now) {
+  const kind = v.state === 'unclear' ? `unclear ${!v.unread ? 'steady' : v.small ? 'small' : 'light'}` : v.state;
+  lately.push({ kind, v, t: now });
+  while (now - lately[0].t > LATELY_MS) lately.shift();
+  if (v.state === 'locked' || !said || v.count > said.v.count) { said = { kind, v, at: now }; return v; }
+  // The commonest lately, as of its latest read; a tie goes to the latest.
+  const n = new Map();
+  for (const r of lately) n.set(r.kind, (n.get(r.kind) || 0) + 1);
+  const best = lately.reduce((a, b) => (n.get(b.kind) >= n.get(a.kind) ? b : a));
+  if (said && best.kind === said.kind) said.v = best.v;
+  else if (!said || now - said.at >= HOLD_MS) said = { kind: best.kind, v: best.v, at: now };
+  return { ...said.v, count: v.count, ids: v.ids };
+}
+
 function describe(v) {
   switch (v.state) {
     case 'partial': return 'I can see card corners. Get whole cards in view.';
@@ -338,16 +380,21 @@ function describe(v) {
 
 // Draws one mark on each card in the camera view: a green tick and its name once the card
 // is identified, grey "…" while it's still being read, red "?" when it can't be read
-// (glare or blur). Identified cards keep their tick wherever the map puts them in this
-// view, whether or not this read saw them. A read describes a frame from a moment ago,
-// so while the phone moves the marks trail the cards: they fade unless a fresh read
-// replaces them, after a bit longer than reads take.
-let readGap = 300, lastDraw = 0;
-function drawOverlay(res, fw, fh, counted = new Set(), map = null) {
+// (glare or blur) and isn't one already identified. Identified cards keep their tick
+// wherever the map puts them in this view, whether or not this read saw them. A read
+// describes a frame from a moment ago, so while the phone moves the marks trail the
+// cards: they fade unless a fresh read replaces them, after a bit longer than reads take.
+// A read that made out no card at all (a frame blurred as the phone moved) leaves the
+// marks of the read before to fade, rather than wiping them.
+let readGap = 300, lastRead = 0;
+function drawOverlay(res, fw, fh, verdict = null) {
   const video = $('video'), cv = $('overlay');
   const now = performance.now();
-  if (res && lastDraw) readGap = 0.7 * readGap + 0.3 * Math.min(2000, now - lastDraw);
-  lastDraw = res ? now : 0;
+  if (res && lastRead) readGap = 0.7 * readGap + 0.3 * Math.min(2000, now - lastRead);
+  lastRead = res ? now : 0;
+  const strays = verdict ? verdict.strays : [];
+  if (res && !res.cards.length && !strays.length) return;
+  const counted = new Set(verdict ? verdict.ids : []), map = verdict && verdict.map;
   cv.style.transition = 'none';
   cv.style.opacity = '1';
   if (res) {
@@ -382,8 +429,9 @@ function drawOverlay(res, fw, fh, counted = new Set(), map = null) {
   const GREEN = '#1F9D55', GREY = 'rgba(55, 62, 74, .92)', RED = '#D93A2B';
   const name = id => NAME[id] || `#${id}`;
   for (const c of res.cards) badge(counted.has(c.id) ? `✓ ${name(c.id)}` : '…', P(c.centre), counted.has(c.id) ? GREEN : GREY, c.mm);
-  for (const u of res.unread) badge('?', P(u.centre), RED, u.mm);
+  for (const u of strays) badge('?', P(u.centre), RED, u.mm);
   // Identified cards this read didn't see, where the map says they are.
+  // (`frame` is there only when this read was placed, so `current` is this read's group.)
   const group = map && map.frame && map.groups.find(g => g.current);
   if (group) {
     const here = new Set(res.cards.map(c => c.id)), ppm = map.frame.ppm;
@@ -436,9 +484,8 @@ function stopLive(message) {
 }
 
 // What the scan found, laid out for the results: the groups of cards on the map, each
-// with its rows, and any card counted but never placed on the map. Cards the last frame
-// couldn't read are reported only when the scan didn't find all it was looking for:
-// otherwise they were counted from other frames.
+// with its rows, any card counted but never placed on the map, and the cards it saw but
+// never identified (none when it found all it was looking for).
 function scanResult(found, final, map, complete) {
   const byId = new Map(found.map(c => [c.id, c]));
   const groups = (map ? map.groups : []).map(g => ({ rows: g.rows.map(r => r.filter(id => byId.has(id)).map(id => byId.get(id))).filter(r => r.length) }))
@@ -446,8 +493,8 @@ function scanResult(found, final, map, complete) {
   const placed = new Set(groups.flatMap(g => g.rows.flat().map(c => c.id)));
   const unplaced = found.filter(c => !placed.has(c.id));
   if (unplaced.length) groups.push({ rows: [unplaced], unplaced: true });
-  const leftovers = final && !complete;
-  return { markers: final ? final.markers : [], cards: found, unread: leftovers ? final.unread : [], loose: leftovers ? final.loose : [], doubles: [], rows: groups.flatMap(g => g.rows), groups };
+  const waiting = complete || !map ? [] : map.groups.flatMap(g => g.waiting);
+  return { markers: final ? final.markers : [], cards: found, unread: [], loose: [], waiting, doubles: [], rows: groups.flatMap(g => g.rows), groups };
 }
 
 async function startLive() {
@@ -466,6 +513,8 @@ async function startLive() {
   $('liveInfo').textContent = '';
   $('settle').style.width = '0';
   drawOverlay(null);
+  said = null;
+  lately = [];
   paintMap($('minimap'), null, { width: $('minimap').clientWidth || 300, height: 84 });
   $('mapKey').hidden = true;
   keepAwake();
@@ -474,12 +523,13 @@ async function startLive() {
       video: $('video'),
       expected: expected(),
       onRead({ verdict, res, w, h, fps, camera }) {
-        drawOverlay(res, w, h, new Set(verdict.ids), verdict.map);
-        $('liveStatus').textContent = describe(verdict);
+        drawOverlay(res, w, h, verdict);
+        $('liveStatus').textContent = describe(steady(verdict, performance.now()));
         const groups = verdict.map ? verdict.map.groups.length : 0;
         $('liveCount').textContent = (expected() ? `${verdict.count} of ${expected()}` : verdict.count ? plural(verdict.count, 'card') : '') + (groups > 1 ? ` · ${groups} groups` : '');
         paintMap($('minimap'), verdict.map, { width: $('minimap').clientWidth, height: $('minimap').clientHeight });
         $('mapKey').hidden = !(verdict.map && verdict.map.groups.length);
+        $('waitingKey').hidden = !(verdict.map && verdict.map.groups.some(g => g.waiting.length));
         // The bar: how many of the cards it's looking for it has, or how long it's been
         // held still when it doesn't know how many.
         const bar = expected() ? Math.min(1, verdict.count / expected()) : verdict.settle || (verdict.state === 'locked' ? 1 : 0);

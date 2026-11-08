@@ -162,3 +162,29 @@ test('lists sideways cards’ rows left to right, whichever way they lean', () =
     assert.deepEqual(rowsOf(cards).map(r => r.map(c => c.id)), [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]], `lean ${lean}`);
   }
 });
+
+test('a card seen but not read waits on the map, in its place, until it’s read', () => {
+  const tbl = table(3, 2), map = makeTableMap();
+  // Card 6's ring won't read: the reader gives where it is, not which card it is.
+  const strayOf = v => { const c = v.cards.find(c => c.id === 6); return { centre: c.centre, axis: c.axis, mm: c.mm }; };
+  const v1 = look(tbl, { at: [102, 103], ppm: 6 }), s1 = strayOf(v1);
+  map.add(v1.cards.filter(c => c.id !== 6), v1.size, [s1]);
+  assert.deepEqual(map.snapshot().groups[0].waiting, [], 'seen once, it isn’t shown yet');
+  assert.equal(map.unknown([s1]).length, 1);
+  const v2 = look(tbl, { at: [108, 98], angle: 3, ppm: 6 }), s2 = strayOf(v2);
+  map.add(v2.cards.filter(c => c.id !== 6), v2.size, [s2]);
+  const g = map.snapshot().groups[0];
+  assert.equal(g.waiting.length, 1);
+  // It sits where card 6 lies: as far from card 5 as on the table.
+  const five = g.cards.find(c => c.id === 5).centre, w = g.waiting[0].centre;
+  assert.ok(Math.abs(Math.hypot(w[0] - five[0], w[1] - five[1]) - 68) < 3, `waiting card ${Math.hypot(w[0] - five[0], w[1] - five[1]).toFixed(1)} mm from card 5`);
+  // A ring that doesn't read where the map already has a card is that card.
+  const five2 = v2.cards.find(c => c.id === 5);
+  assert.deepEqual(map.unknown([{ centre: five2.centre, mm: five2.mm }]), []);
+  // Read at last, it takes the waiting card's place.
+  const v3 = look(tbl, { at: [104, 101], ppm: 6 });
+  map.add(v3.cards, v3.size);
+  const g3 = map.snapshot().groups[0];
+  assert.deepEqual(g3.waiting, []);
+  assert.equal(g3.cards.length, 6);
+});

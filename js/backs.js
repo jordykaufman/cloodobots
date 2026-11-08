@@ -430,7 +430,8 @@ function nameRing(bits) {
 // round, which is the same picture), so each mark guesses the card's centre twice.
 // The marks of one card agree on a spot, and there is a brass circle round it. Returns
 // cards { id, centre, axis, mm, markers, ring, contrast, errors }, `unread`: cards
-// whose ring matched no code, and `loose`: marks that fit no card { centre, mm, whole }.
+// whose ring matched no code, and `loose`: marks that fit no card { centre, mm, whole },
+// with `card` { centre, axis } on `whole` marks, where their card would be.
 // `size` is one of CARD_SIZES.
 export function cardsFromBezels(markers, img, size = CARD_SIZES[0]) {
   const to = toCentre(size);
@@ -491,7 +492,7 @@ export function cardsFromBezels(markers, img, size = CARD_SIZES[0]) {
   // the picture don't count.
   const free = marks.map((_, i) => i).filter(i => !taken.has(i));
   const inside = ([x, y]) => x >= 0 && y >= 0 && x <= img.w && y <= img.h;
-  const hidden = new Set();
+  const hidden = new Map();
   for (const g of guesses) {
     if (taken.has(g.i) || hidden.has(g.i)) continue;
     const members = new Set([g.i]), corners = new Set([g.slot]);
@@ -507,9 +508,10 @@ export function cardsFromBezels(markers, img, size = CARD_SIZES[0]) {
     if (members.size < 3) continue;
     const k = g.k, half = [k.right.map(v => v * size.w / 2), k.down.map(v => v * size.h / 2)];
     const whole = [[-1, -1], [1, -1], [1, 1], [-1, 1]].every(([a, b]) => inside([g.x + a * half[0][0] + b * half[1][0], g.y + a * half[0][1] + b * half[1][1]]));
-    if (whole) members.forEach(i => hidden.add(i));
+    const d = Math.hypot(...k.down), card = { centre: [g.x, g.y], axis: [k.down[0] / d, k.down[1] / d] };
+    if (whole) members.forEach(i => hidden.set(i, card));
   }
-  const loose = free.map(i => ({ centre: marks[i].centre, mm: marks[i].s, whole: hidden.has(i) }));
+  const loose = free.map(i => (hidden.has(i) ? { centre: marks[i].centre, mm: marks[i].s, whole: true, card: hidden.get(i) } : { centre: marks[i].centre, mm: marks[i].s, whole: false }));
   return { cards, unread, loose };
 }
 

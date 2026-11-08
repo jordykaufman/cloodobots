@@ -10,8 +10,8 @@ const card = (id, mm = 7) => ({ id, centre: [100 + (id % 5) * 70 * mm, 120 + Mat
 const read = ({ cards = [], unread = [], markers = [{ id: 34 }], doubles = [], loose = [] } = {}) => ({ cards, unread, markers, doubles, loose, rows: [cards], size: [1440, 2160] });
 const seen = (...ids) => read({ cards: ids.map(id => card(id)) });
 const counted = tracker => [...tracker.found.keys()].sort((a, b) => a - b);
-// A verdict without the map and the list of cards it carries.
-const plain = ({ map, ids, ...v }) => v;
+// A verdict without the map and the lists of cards it carries.
+const plain = ({ map, ids, strays, ...v }) => v;
 
 // Feeds reads to a tracker, one every `gap` ms, and returns the last verdict.
 function feed(tracker, reads, start = 0, gap = 200) {
@@ -142,4 +142,18 @@ test('told how many cards to find, stops the moment it has them, moving or not',
   const short = makeTracker({ expected: 5 });
   const v2 = feed(short, Array.from({ length: 20 }, () => seen(1, 2)));
   assert.equal(v2.state, 'settling');
+});
+
+test('a card already found whose ring doesn’t read in one frame isn’t a card it can’t read', () => {
+  const t = makeTracker();
+  feed(t, [seen(3, 8), seen(3, 8)]);
+  // Card 8's ring washed out by a reflection: it's still card 8.
+  const glare = read({ cards: [card(3)], unread: [{ centre: card(8).centre, axis: [0, 1], mm: 7, ring: {} }] });
+  const v = t.add(glare, 400);
+  assert.equal(v.state, 'settling');
+  assert.deepEqual(v.strays, []);
+  // A card it hasn't found, lying beside them, is one it can't read.
+  const other = read({ cards: [card(3)], unread: [{ centre: card(13).centre, axis: [0, 1], mm: 7, ring: {} }] });
+  const w = t.add(other, 600);
+  assert.deepEqual([w.state, w.unread, w.strays.length], ['unclear', 1, 1]);
 });

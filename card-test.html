@@ -48,6 +48,12 @@ html.scanning, html.scanning body { overflow: hidden; }
 .settle { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .18); overflow: hidden; }
 .settle span { display: block; height: 100%; width: 0; background: #3DDC84; transition: width .25s linear; }
 .scanner-info { margin: 0; font-size: .8rem; color: rgba(242, 244, 247, .6); }
+/* What the map's marks mean, each with a small copy of its mark. */
+.scanner-key { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 0; font-size: .8rem; color: rgba(242, 244, 247, .8); }
+.scanner-key span::before { content: ""; display: inline-block; box-sizing: border-box; width: 8px; height: 12px; margin-right: 6px; vertical-align: -2px; border-radius: 1px; }
+.scanner-key .found::before { background: #3DDC84; }
+.scanner-key .waiting::before { border: 1.5px solid #FF5A4E; }
+.scanner-key .camera::before { width: 15px; height: 11px; border: 1.5px solid rgba(255, 255, 255, .85); }
 .scanner-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .again { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
 .again .btn { flex: 1 1 12rem; }
@@ -86,7 +92,7 @@ html.scanning, html.scanning body { overflow: hidden; }
     </div>
     <div class="scanner-bottom">
       <canvas class="minimap" id="minimap" aria-hidden="true"></canvas>
-      <p class="scanner-info" id="mapKey" hidden>On the map, each green card has been identified; the white box is where the camera is.</p>
+      <p class="scanner-key" id="mapKey" hidden><span class="found">identified</span><span class="waiting" id="waitingKey" hidden>seen, can’t read yet</span><span class="camera">what the camera sees</span></p>
       <div class="settle" aria-hidden="true"><span id="settle"></span></div>
       <p class="scanner-info" id="liveInfo"></p>
       <div class="scanner-buttons">
