@@ -219,12 +219,12 @@ function startOver() {
 /* ---------- the table map ---------- */
 
 // Draws the table as a live scan has pieced it together: each group's cards as card
-// shapes (every one counted), groups side by side, scaled to fit. `inView` marks the
-// cards the camera sees now (outlined), and the last view's outline is drawn too. With `names`,
+// shapes (every one counted, so all green), groups side by side, scaled to fit, with a
+// white box for where the camera is. With `names`,
 // each card is labelled. `width` and `height` are in CSS pixels; without `height`, the
 // canvas takes the map's own shape.
 const MAP_CARD = { w: 56, h: 87 };
-function paintMap(cv, map, { names = false, inView = new Set(), width = cv.clientWidth, height = null } = {}) {
+function paintMap(cv, map, { names = false, width = cv.clientWidth, height = null } = {}) {
   const dpr = window.devicePixelRatio || 1, GAP = 40, PAD = 8;
   const corners = c => {
     const [ax, ay] = c.axis, px = -ay, py = ax;
@@ -259,7 +259,6 @@ function paintMap(cv, map, { names = false, inView = new Set(), width = cv.clien
       ctx.fillStyle = names ? '#141B2A' : '#3DDC84';
       ctx.fill();
       if (names) { ctx.strokeStyle = '#D9B46A'; ctx.lineWidth = 1.5; ctx.stroke(); }
-      else if (inView.has(c.id)) { ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2; ctx.stroke(); }
     }
     if (g.current && map.view && !names) {
       path(map.view);
@@ -334,9 +333,10 @@ function describe(v) {
 }
 
 // Draws what the last read found over the camera view: each card's corner marks, its
-// circle and its name, with a tick once it counts (green when counted, white when read
-// but not counted yet, red when its ring couldn't be read). Cards counted earlier keep
-// their tick and name where the map puts them in this view, read again or not. A read
+// circle and its name: green with a tick once it counts, white while it's been read but
+// not counted yet (a rough read, waiting for a second), red when its ring couldn't be
+// read. Counted cards keep their tick and name where the map puts them in this view,
+// read again or not. A read
 // describes a frame from a moment ago, so while the phone moves the drawing trails the
 // cards: it fades unless a fresh read replaces it, after a bit longer than reads take.
 let readGap = 300, lastDraw = 0;
@@ -473,6 +473,7 @@ async function startLive() {
   $('settle').style.width = '0';
   drawOverlay(null);
   paintMap($('minimap'), null, { width: $('minimap').clientWidth || 300, height: 84 });
+  $('mapKey').hidden = true;
   keepAwake();
   try {
     live = await startLiveScan({
@@ -483,7 +484,8 @@ async function startLive() {
         $('liveStatus').textContent = describe(verdict);
         const groups = verdict.map ? verdict.map.groups.length : 0;
         $('liveCount').textContent = (expected() ? `${verdict.count} of ${expected()}` : verdict.count ? plural(verdict.count, 'card') : '') + (groups > 1 ? ` · ${groups} groups` : '');
-        paintMap($('minimap'), verdict.map, { inView: new Set(res.cards.map(c => c.id)), width: $('minimap').clientWidth, height: $('minimap').clientHeight });
+        paintMap($('minimap'), verdict.map, { width: $('minimap').clientWidth, height: $('minimap').clientHeight });
+        $('mapKey').hidden = !(verdict.map && verdict.map.groups.length);
         // The bar: how many of the cards it's looking for it has, or how long it's been
         // held still when it doesn't know how many.
         const bar = expected() ? Math.min(1, verdict.count / expected()) : verdict.settle || (verdict.state === 'locked' ? 1 : 0);

@@ -10,10 +10,11 @@ import { grayOf, readLayout } from './backs.js';
 import { makeTableMap } from './table-map.js';
 
 // A card counts at once when its ring read cleanly, with no more than SURE_ERRORS of its
-// 72 ticks wrong (any two cards differ in at least 25, so that can't be another card);
+// 72 ticks wrong (any two cards differ in at least 25, so it's still at least 19 from any
+// other card);
 // otherwise once it has been read twice within CONFIRM_WITHIN reads, so one misread
 // frame can't add a card.
-export const SURE_ERRORS = 3;
+export const SURE_ERRORS = 6;
 export const CONFIRM_WITHIN = 5;
 // Told how many cards to find, the scan stops as soon as it has them. Otherwise it stops
 // once no new card has turned up for SETTLE_MS, with the phone held still: the view not

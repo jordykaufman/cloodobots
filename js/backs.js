@@ -520,10 +520,13 @@ export function rowsOf(cards) {
   let c2 = 0, s2 = 0;
   for (const c of cards) { const a = Math.atan2(c.axis[1], c.axis[0]); c2 += Math.cos(2 * a); s2 += Math.sin(2 * a); }
   const a = Math.atan2(s2, c2) / 2;
-  let v = [Math.cos(a), Math.sin(a)];          // across the rows
-  if (v[1] < 0 || (Math.abs(v[1]) < 1e-6 && v[0] < 0)) v = [-v[0], -v[1]];
-  let u = [-v[1], v[0]];                        // along a row
-  if (u[0] < 0) u = [-u[0], -u[1]];
+  // Rows are listed top to bottom and each read left to right, as you'd read the table.
+  // With the cards lying sideways the rows run up and down the photo, so they're listed
+  // left to right and each read top to bottom. Each direction points along whichever way
+  // it mostly runs, so a hair's difference in the cards' angle can't turn the order round.
+  const forwards = ([x, y]) => (Math.abs(y) > Math.abs(x) ? (y < 0 ? [-x, -y] : [x, y]) : (x < 0 ? [-x, -y] : [x, y]));
+  const v = forwards([Math.cos(a), Math.sin(a)]);   // across the rows
+  const u = forwards([-v[1], v[0]]);                // along a row
   const mm = cards.map(c => c.mm).sort((x, y) => x - y)[cards.length >> 1];
   const items = cards.map(c => ({ c, along: c.centre[0] * u[0] + c.centre[1] * u[1], across: c.centre[0] * v[0] + c.centre[1] * v[1] }));
   items.sort((p, q) => p.across - q.across);

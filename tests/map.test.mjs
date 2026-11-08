@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeTableMap } from '../js/table-map.js';
+import { rowsOf } from '../js/backs.js';
 
 // A table of cards laid in rows: id -> centre (mm) and long-side axis. `at` moves the
 // whole block.
@@ -14,22 +15,34 @@ function table(cols, rows, { gx = 12, gy = 16, w = 56, h = 87, at = [0, 0], firs
 const rowsOfTable = (cols, rows, first = 1) => Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => first + r * cols + c));
 
 // A view of the table: centred on `at` (mm), turned by `angle` degrees, at `ppm` pixels
-// per millimetre, in a frame of `size` pixels. Returns the cards wholly in the frame, as
-// the reader gives them, and the frame size.
+// per millimetre, in a frame of `size` pixels; with `tilt`, the phone held at an angle,
+// so the top of the picture sees the table smaller than the bottom (tilt 0.3: about 30%
+// smaller across the frame). Returns the cards wholly in the frame, as the reader gives
+// them (each card's size and axis as they look where it lies), and the frame size.
 let seed = 7;
 const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-function look(tbl, { at, angle = 0, ppm = 6, size = [1440, 2160], flip = 0, jitter = 0.4 }) {
+function look(tbl, { at, angle = 0, ppm = 6, size = [1440, 2160], flip = 0, jitter = 0.4, tilt = 0 }) {
   const a = angle * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const project = ([px, py]) => {
+    const dx = px - at[0], dy = py - at[1];
+    const x = ppm * (c * dx - s * dy), y = ppm * (s * dx + c * dy);
+    const f = 1 + tilt * y / size[1];
+    return [size[0] / 2 + x / f, size[1] / 2 + y / f];
+  };
   const cards = [];
   for (const [id, { p, axis }] of tbl) {
-    const dx = p[0] - at[0], dy = p[1] - at[1];
-    const x = size[0] / 2 + ppm * (c * dx - s * dy) + (rand() - 0.5) * 2 * jitter, y = size[1] / 2 + ppm * (s * dx + c * dy) + (rand() - 0.5) * 2 * jitter;
+    const [x0, y0] = project(p);
+    const x = x0 + (rand() - 0.5) * 2 * jitter, y = y0 + (rand() - 0.5) * 2 * jitter;
     const m = 45 * ppm;
     if (x < m || y < m || x > size[0] - m || y > size[1] - m) continue;
-    let ax = c * axis[0] - s * axis[1], ay = s * axis[0] + c * axis[1];
+    const ex = project([p[0] + 1, p[1]]), ey = project([p[0], p[1] + 1]), tip = project([p[0] + axis[0], p[1] + axis[1]]);
+    const mm = (Math.hypot(ex[0] - x0, ex[1] - y0) + Math.hypot(ey[0] - x0, ey[1] - y0)) / 2;
+    let ax = tip[0] - x0, ay = tip[1] - y0;
+    const l = Math.hypot(ax, ay);
+    ax /= l; ay /= l;
     // The reader can't tell which end of a card is up: sometimes the axis comes back turned round.
     if (rand() < flip) { ax = -ax; ay = -ay; }
-    cards.push({ id, centre: [x, y], axis: [ax, ay], mm: ppm * (1 + (rand() - 0.5) * 0.04) });
+    cards.push({ id, centre: [x, y], axis: [ax, ay], mm: mm * (1 + (rand() - 0.5) * 0.04) });
   }
   return { cards, size };
 }
@@ -118,4 +131,34 @@ test('leaves out a read whose only shared cards disagree', () => {
   v2.cards[1].centre[0] += 60 * 6;
   assert.equal(map.add(v2.cards, v2.size), false);
   assert.equal(map.snapshot().groups[0].cards.length, 2);
+});
+
+test('pieces the table together with the phone held at an angle', () => {
+  // The far side of every view about 30% smaller than the near side, as when the phone is
+  // tilted away from the light's reflection.
+  for (const tilt of [0.3, -0.3]) {
+    const tbl = table(3, 7), map = makeTableMap();
+    for (let i = 0; i <= 30; i++) {
+      const v = look(tbl, { at: [96, 150 + i * 14], angle: i * 0.5, ppm: 5.2 - i * 0.025, flip: 0.3, tilt });
+      assert.ok(map.add(v.cards, v.size), `view ${i}, tilt ${tilt}`);
+    }
+    const g = map.snapshot().groups;
+    assert.equal(g.length, 1);
+    assert.equal(g[0].cards.length, 21);
+    assert.deepEqual(g[0].rows, rowsOfTable(3, 7));
+    // Measured a step at a time at each card's own scale, the far ends of a 65 cm table can
+    // drift a couple of centimetres; rows are 10 cm apart, so they still come out right.
+    assert.ok(worstSpacing(g[0], tbl) < 25, `tilt ${tilt}: spacing off by ${worstSpacing(g[0], tbl).toFixed(1)} mm`);
+  }
+});
+
+test('lists sideways cards’ rows left to right, whichever way they lean', () => {
+  // Cards lying sideways in three columns; the columns lean a hair one way, then the other.
+  for (const lean of [0.3, -0.3]) {
+    const t = lean * Math.PI / 180, cards = [];
+    for (let col = 0; col < 3; col++) for (let k = 0; k < 4; k++) {
+      cards.push({ id: col * 4 + k + 1, centre: [col * 100 - k * 70 * Math.sin(t), k * 70], axis: [Math.cos(t), Math.sin(t)], mm: 1 });
+    }
+    assert.deepEqual(rowsOf(cards).map(r => r.map(c => c.id)), [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]], `lean ${lean}`);
+  }
 });
