@@ -29,13 +29,23 @@ body { margin: 0; }
 .sizes .no { color: var(--muted); }
 .key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem; color: var(--muted); }
 .key span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--k); }
-.live { position: relative; border-radius: 10px; overflow: hidden; background: #000; }
-.live video { display: block; width: 100%; max-height: 64vh; object-fit: contain; background: #000; }
-.live canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.live-status { margin: 0; font: 700 1.12rem/1.3 var(--font-body); min-height: 2.6em; }
-.steady { display: flex; gap: 6px; }
-.steady span { width: 34px; height: 6px; border-radius: 3px; background: var(--line); transition: background .15s; }
-.steady span.on { background: var(--good); }
+/* The live scan takes the whole screen: what it says on top, the camera in the middle,
+   the buttons at the bottom. */
+html.scanning, html.scanning body { overflow: hidden; }
+.scanner { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: #000; color: #F2F4F7;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+.scanner-top { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; padding: 12px 16px 10px; }
+.scanner-status { margin: 0; font: 700 1.05rem/1.3 var(--font-body); min-height: 2.6em; }
+.scanner-count { margin: 0; font: 800 1.05rem/1.3 var(--font-body); color: #3DDC84; white-space: nowrap; }
+.scanner-view { position: relative; flex: 1; min-height: 0; }
+.scanner-view video, .scanner-view canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.scanner-view video { object-fit: contain; }
+.scanner-view canvas { pointer-events: none; }
+.scanner-bottom { display: grid; gap: 8px; padding: 10px 16px 14px; }
+.settle { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .18); overflow: hidden; }
+.settle span { display: block; height: 100%; width: 0; background: #3DDC84; transition: width .25s linear; }
+.scanner-info { margin: 0; font-size: .8rem; color: rgba(242, 244, 247, .6); }
+.scanner-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .again { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
 .again .btn { flex: 1 1 12rem; }
 .tally { margin: 0; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; }
@@ -46,7 +56,7 @@ body { margin: 0; }
   <header class="masthead">
     <p class="brand"><span>Cluedo Robot Players</span></p>
     <h1 class="h1">Card back reader test</h1>
-    <p class="lede">Lay the test cards face-down and tap Scan live: hold the phone over them and it reads them as you point, and chimes when it has them. Or take one photo of them all from about 40 cm up.</p>
+    <p class="lede">Lay the test cards face-down and tap Scan live. Hold the phone over them, or move it slowly across the table: it reads them as you go, keeps count, and chimes when it has them all. Or take one photo of them all; zooming to 2× helps.</p>
   </header>
   <section class="panel">
     <button class="btn btn--primary btn--big" type="button" id="scanLive">Scan live</button>
@@ -58,16 +68,24 @@ body { margin: 0; }
     <input type="file" id="library" accept="image/*" hidden>
     <p class="hint" id="status" role="status">Tip: tilt the phone a little away from straight down so the light’s reflection misses the cards. No flash.</p>
   </section>
-  <section class="panel" id="live" hidden>
-    <p class="live-status" id="liveStatus" role="status" aria-live="polite">Starting the camera…</p>
-    <div class="live">
+  <div class="scanner" id="live" hidden>
+    <div class="scanner-top">
+      <p class="scanner-status" id="liveStatus" role="status" aria-live="polite">Starting the camera…</p>
+      <p class="scanner-count" id="liveCount"></p>
+    </div>
+    <div class="scanner-view">
       <video id="video" muted playsinline></video>
       <canvas id="overlay" aria-hidden="true"></canvas>
     </div>
-    <div class="steady" id="steady" aria-hidden="true"><span></span><span></span><span></span></div>
-    <p class="hint" id="liveInfo"></p>
-    <button class="btn btn--ghost" type="button" id="stopLive">Stop</button>
-  </section>
+    <div class="scanner-bottom">
+      <div class="settle" aria-hidden="true"><span id="settle"></span></div>
+      <p class="scanner-info" id="liveInfo"></p>
+      <div class="scanner-buttons">
+        <button class="btn btn--ghost" type="button" id="stopLive">Cancel</button>
+        <button class="btn btn--primary" type="button" id="finishLive">Done</button>
+      </div>
+    </div>
+  </div>
   <section class="panel" id="results" hidden>
     <p class="summary" id="summary"></p>
     <p class="missing" id="missing" hidden></p>
@@ -82,7 +100,7 @@ body { margin: 0; }
       <p class="hint">Pictures taken on this page aren’t kept by the phone. Share this one to Google Drive, or send it on, so the reader can be tuned on real photos.</p>
     </div>
     <div id="rowsBox" hidden>
-      <h2 class="h2">Rows, from the top of the photo</h2>
+      <h2 class="h2" id="rowsTitle">Rows, from the top of the photo</h2>
       <ol class="rows" id="rows"></ol>
     </div>
     <div id="sizesBox" hidden>

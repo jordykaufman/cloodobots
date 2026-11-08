@@ -1,12 +1,16 @@
-// Live scanning of card backs. The camera runs; each frame is read off the main thread;
-// what was found is handed back after every read; and once the same cards have read the
-// same way a few reads in a row, with every card's ring read, the scan locks and hands
-// back the frame it locked on. Nothing leaves the phone.
+// Live scanning of card backs. The camera runs and each frame is read off the main
+// thread. Cards are remembered across frames, so the phone can be held over all of them
+// at once or moved across the table: a card counts once it has been read twice within a
+// few reads. Once no new card has turned up for a second, with every card in view read,
+// the scan locks and hands back the cards and the last frame. Nothing leaves the phone.
 
 import { grayOf, readLayout } from './backs.js';
 
-// How many reads in a row must agree before the scan locks.
-export const LOCK_READS = 3;
+// A card counts once it has been read twice within this many reads, so one misread
+// frame can't add a card.
+export const CONFIRM_WITHIN = 5;
+// The scan locks once no new card has turned up for this long.
+export const SETTLE_MS = 1000;
 
 // The reader's result made small enough to post between threads: its working parts
 // dropped, and rows given as positions in the card list (the cards appear in both).
@@ -24,36 +28,51 @@ export function slim(res) {
 export const unslim = s => ({ ...s, rows: s.rows.map(row => row.map(i => s.cards[i])) });
 
 const median = xs => { const s = xs.slice().sort((a, b) => a - b); return s.length ? s[s.length >> 1] : 0; };
-const key = r => r.cards.map(c => c.id).sort((a, b) => a - b).join(',');
+
 // Cards in view that couldn't be read: rings that matched no card, and corner marks
 // with no card read round them where a whole card would be in the picture (glare can
-// wash out a card's circle and leave its corners; two such marks make one card).
-const unreadable = r => (r.unread || []).length + Math.ceil((r.loose || []).filter(m => m.whole).length / 4 - 0.25);
-const clear = r => !unreadable(r) && !r.doubles.length;
+// wash out a card's circle and leave its corners; three or four such marks make a card).
+export const unreadable = r => (r.unread || []).length + Math.ceil((r.loose || []).filter(m => m.whole).length / 4 - 0.25);
 
-// Where a scan stands, from its reads so far (the latest last):
-//   nothing   - nothing like a card in view
-//   partial   - card marks in view, but no whole card
-//   unclear   - cards in view that couldn't be read (through glare, blur or distance);
-//               `unread` counts them, and `small` says the cards look too small to read
-//   steadying - every card in view read; `run` reads in a row have agreed so far
-//   locked    - LOCK_READS reads in a row found the same cards, with every card read
-export function judge(reads) {
-  const last = reads[reads.length - 1];
-  if (!last) return { state: 'nothing', cards: [] };
-  const cards = last.cards, unread = last.unread || [];
-  if (!clear(last)) {
-    const mm = median(cards.concat(unread, (last.loose || []).filter(m => m.whole)).map(c => c.mm));
-    return { state: 'unclear', cards, unread: unreadable(last), small: mm > 0 && mm < 4.5 };
-  }
-  if (!cards.length) return { state: last.markers.length ? 'partial' : 'nothing', cards };
-  const k = key(last);
-  let run = 0;
-  for (let i = reads.length - 1; i >= 0 && run < LOCK_READS; i--) {
-    if (!clear(reads[i]) || key(reads[i]) !== k) break;
-    run++;
-  }
-  return { state: run >= LOCK_READS ? 'locked' : 'steadying', cards, run };
+// Keeps track of a scan, read by read. add(res, t) takes each read (t in milliseconds)
+// and says where the scan stands:
+//   nothing    - nothing like a card in view
+//   partial    - card marks in view, but no whole card
+//   unclear    - cards in view that couldn't be read (through glare, blur or distance);
+//                `unread` counts them, and `small` says the cards look too small to read
+//   collecting - cards in view, some not yet read twice
+//   settling   - every card in view counted; `settle` runs from 0 to 1 over SETTLE_MS
+//   locked     - no new card for SETTLE_MS, every card in view counted
+// Every verdict has `count`, the cards found so far. `found` maps each card's id to
+// where it was last seen.
+export function makeTracker() {
+  const sightings = new Map(), found = new Map();
+  let reads = 0, grewAt = null;
+  return {
+    found,
+    add(res, t) {
+      reads++;
+      const doubled = new Set(res.doubles);
+      for (const c of res.cards) {
+        if (doubled.has(c.id)) continue;
+        const s = sightings.get(c.id) || [];
+        if (!found.has(c.id) && s.some(n => reads - n < CONFIRM_WITHIN)) grewAt = t;
+        if (found.has(c.id) || s.some(n => reads - n < CONFIRM_WITHIN)) found.set(c.id, c);
+        s.push(reads);
+        while (s.length && reads - s[0] >= CONFIRM_WITHIN) s.shift();
+        sightings.set(c.id, s);
+      }
+      const count = found.size, unread = unreadable(res);
+      if (unread || res.doubles.length) {
+        const mm = median(res.cards.concat(res.unread || [], (res.loose || []).filter(m => m.whole)).map(c => c.mm));
+        return { state: 'unclear', count, unread, small: mm > 0 && mm < 3.2 };
+      }
+      if (!res.cards.length) return { state: res.markers.length ? 'partial' : 'nothing', count };
+      if (grewAt === null || res.cards.some(c => !found.has(c.id))) return { state: 'collecting', count };
+      const settle = Math.min(1, (t - grewAt) / SETTLE_MS);
+      return { state: settle >= 1 ? 'locked' : 'settling', count, settle };
+    },
+  };
 }
 
 // Reads frames in a worker, so the camera view stays smooth, or on this thread where
@@ -101,8 +120,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Starts the camera in `video` and reads frames until the scan locks or is stopped.
 // onRead({ verdict, res, w, h, ms, fps, camera }) comes after every read, with the
 // result in the coordinates of the frame read (w x h, which can be smaller than the
-// camera's own frames). onLock({ res, canvas, w, h }) comes once, with the frame the
-// scan locked on. onError(error) if the camera or reader fails. Returns { stop() }.
+// camera's own frames). onLock({ found, last, canvas, w, h, early }) comes once: the
+// cards found (each where it was last seen), the last read and the frame it was read
+// from; `early` when finish() ended the scan before it locked. onError(error) if the
+// camera or reader fails. Returns { stop(), finish() }.
 export async function startLiveScan({ video, onRead, onLock, onError }) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
@@ -113,49 +134,57 @@ export async function startLiveScan({ video, onRead, onLock, onError }) {
   video.setAttribute('playsinline', '');
   video.srcObject = stream;
   await video.play().catch(() => {});
-  const reader = makeReader();
-  const frame = document.createElement('canvas');
-  const fctx = frame.getContext('2d', { willReadFrequently: true });
-  let running = true, scale = 1;
-  const reads = [], times = [];
+  const reader = makeReader(), tracker = makeTracker();
+  // Two canvases, taking turns: one holds the frame being read, the other the frame
+  // the last result came from.
+  const frames = [0, 1].map(() => { const c = document.createElement('canvas'); return { canvas: c, ctx: c.getContext('2d', { willReadFrequently: true }) }; });
+  let running = true, scale = 1, turn = 0, last = null;
+  const times = [];
   const halt = () => {
     running = false;
     for (const t of stream.getTracks()) t.stop();
     video.srcObject = null;
     reader.close();
   };
+  const hand = early => onLock({ found: [...tracker.found.values()], last: last && last.res, canvas: last && last.canvas, w: last && last.w, h: last && last.h, early });
 
   (async () => {
     while (running) {
       const vw = video.videoWidth, vh = video.videoHeight;
       if (!vw || !vh) { await sleep(100); continue; }
       const w = Math.round(vw * scale), h = Math.round(vh * scale);
-      if (frame.width !== w || frame.height !== h) { frame.width = w; frame.height = h; }
-      fctx.drawImage(video, 0, 0, w, h);
-      const out = await reader.read(fctx.getImageData(0, 0, w, h));
+      const f = frames[turn];
+      if (f.canvas.width !== w || f.canvas.height !== h) { f.canvas.width = w; f.canvas.height = h; }
+      f.ctx.drawImage(video, 0, 0, w, h);
+      const out = await reader.read(f.ctx.getImageData(0, 0, w, h));
       if (!running) break;
       if (!out) continue;
       const res = unslim(out.res);
-      reads.push(res);
-      if (reads.length > 8) reads.shift();
-      times.push(performance.now());
+      last = { res, canvas: f.canvas, w, h };
+      turn = 1 - turn;
+      const now = performance.now();
+      times.push(now);
       if (times.length > 6) times.shift();
       const fps = times.length > 1 ? (times.length - 1) * 1000 / (times[times.length - 1] - times[0]) : 0;
-      const verdict = judge(reads);
+      const verdict = tracker.add(res, now);
       onRead({ verdict, res, w, h, ms: out.ms, fps, camera: [vw, vh] });
       if (verdict.state === 'locked') {
         halt();
-        onLock({ res, canvas: frame, w, h });
+        hand(false);
         break;
       }
-      // Read the frames at about 7 pixels per millimetre of card: enough for the rings,
-      // and no more pixels than that to get through. Only change for a real difference,
-      // so reads stay comparable.
+      // Read the frames at no more than about 7 pixels per millimetre of card: plenty
+      // for the rings, and no more pixels than that to get through. Only change for a
+      // real difference, so reads stay comparable.
       const mms = res.cards.concat(res.unread).map(c => c.mm);
       const want = mms.length ? Math.min(1, Math.max(0.35, scale * 7 / median(mms))) : 1;
       if (Math.abs(want - scale) / scale > 0.2) scale = want;
     }
   })().catch(e => { if (running) { halt(); onError(e); } });
 
-  return { stop: halt };
+  return {
+    stop: halt,
+    // Ends the scan now with whatever has been found.
+    finish() { if (!running) return; halt(); hand(true); },
+  };
 }

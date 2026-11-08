@@ -3,7 +3,7 @@
 
 import { grayOf, readLayout } from './backs.js';
 import { CARD_MARKERS, DECOY, REG_MARK } from './markers.js';
-import { startLiveScan, LOCK_READS } from './live-scan.js';
+import { startLiveScan } from './live-scan.js';
 import { esc, keepAwake } from './util.js';
 
 const NAME = Object.fromEntries(Object.entries(CARD_MARKERS).map(([n, id]) => [id, n]));
@@ -77,7 +77,7 @@ function draw(photo, res) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   res.rows.forEach((row, r) => row.forEach((card, i) => {
-    if (!NAME[card.id]) return;
+    if (!NAME[card.id] || !card.centre) return;
     const [x, y] = card.centre;
     const label = `${r + 1}·${i + 1}`;
     ctx.fillStyle = 'rgba(255,255,255,.9)';
@@ -94,7 +94,7 @@ function show(photo, res, how) {
   const rows = res.rows.map(r => r.filter(c => NAME[c.id])).filter(r => r.length);
 
   let summary;
-  if (cards.length) summary = `Found ${cards.length} of ${Object.keys(CARD_MARKERS).length} cards, in ${rows.length} row${rows.length === 1 ? '' : 's'}.`;
+  if (cards.length) summary = `Found ${cards.length} of ${Object.keys(CARD_MARKERS).length} cards${rows.length > 1 ? `, in ${rows.length} rows` : ''}.`;
   else if (tests.size) summary = `Read ${tests.size} of ${SIZES.length * SHADES.length} size test markers.`;
   else summary = 'No markers found. Try again closer, with the cards filling most of the photo.';
   $('summary').textContent = summary;
@@ -114,6 +114,7 @@ function show(photo, res, how) {
   $('quality').hidden = !quality;
 
   $('rowsBox').hidden = !rows.length;
+  $('rowsTitle').textContent = rows.length > 1 ? 'Rows, from the top of the photo' : 'Cards found';
   $('rows').innerHTML = rows.map((row, r) => `<li><p class="label">Row ${r + 1} · ${row.length} card${row.length === 1 ? '' : 's'}</p>
     <p class="entry-cards">${row.map(c => `<span class="cc"><span>${esc(NAME[c.id])}</span></span>`).join('')}</p></li>`).join('');
 
@@ -214,20 +215,30 @@ function describe(v) {
       if (!v.unread) return 'Hold steady…';
       return v.small ? `Can’t read ${plural(v.unread, 'card')} yet: move a little closer.`
         : `Can’t read ${plural(v.unread, 'card')}: tilt away from the light, or hold steadier.`;
-    case 'steadying': return `Reading ${plural(v.cards.length, 'card')}: hold still…`;
-    case 'locked': return `Got ${plural(v.cards.length, 'card')}.`;
-    default: return 'Point the camera at the cards, lying face-down.';
+    case 'collecting': return 'Reading the cards: hold still…';
+    case 'settling': return 'Got the cards in view. Hold still, or move on to more.';
+    case 'locked': return 'Done.';
+    default: return v.count ? 'No cards in view. Point at the ones not counted yet.' : 'Point the camera at the cards, lying face-down.';
   }
 }
 
-function setSteady(n) {
-  [...$('steady').children].forEach((el, i) => el.classList.toggle('on', i < n));
-}
-
 // Draws what the last read found over the camera view: each card's corner marks, its
-// circle (green when read, red when its ring couldn't be read) and its name.
+// circle (green when read, red when its ring couldn't be read) and its name. A read
+// describes a frame from a moment ago, so while the phone moves the drawing trails the
+// cards: it fades unless a fresh read replaces it, after a bit longer than reads take.
+let readGap = 300, lastDraw = 0;
 function drawOverlay(res, fw, fh) {
   const video = $('video'), cv = $('overlay');
+  const now = performance.now();
+  if (res && lastDraw) readGap = 0.7 * readGap + 0.3 * Math.min(2000, now - lastDraw);
+  lastDraw = res ? now : 0;
+  cv.style.transition = 'none';
+  cv.style.opacity = '1';
+  if (res) {
+    void cv.offsetWidth;
+    cv.style.transition = `opacity .4s linear ${Math.round(Math.max(350, 1.5 * readGap))}ms`;
+    cv.style.opacity = '0';
+  }
   const cw = video.clientWidth, ch = video.clientHeight, dpr = window.devicePixelRatio || 1;
   cv.width = Math.round(cw * dpr);
   cv.height = Math.round(ch * dpr);
@@ -251,18 +262,20 @@ function drawOverlay(res, fw, fh) {
     ctx.strokeStyle = colour;
     for (const card of list) if (card.ring) { circle(card.ring); ctx.stroke(); }
   }
-  ctx.font = '700 13px Figtree, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const label = (text, [x, y], colour) => {
-    const w = ctx.measureText(text).width + 12;
+  // Names sized to fit across their card.
+  const label = (text, [x, y], colour, mm) => {
+    const size = Math.max(8, Math.min(13, 50 * mm * s / 7));
+    ctx.font = `700 ${size.toFixed(1)}px Figtree, system-ui, sans-serif`;
+    const w = ctx.measureText(text).width + size;
     ctx.fillStyle = 'rgba(14, 19, 27, .85)';
-    ctx.fillRect(x - w / 2, y - 11, w, 22);
+    ctx.fillRect(x - w / 2, y - size * 0.85, w, size * 1.7);
     ctx.fillStyle = colour;
     ctx.fillText(text, x, y + 1);
   };
-  for (const c of res.cards) label(NAME[c.id] || `#${c.id}`, P(c.centre), '#3DDC84');
-  for (const u of res.unread) label('?', P(u.centre), '#FF5A4E');
+  for (const c of res.cards) label(NAME[c.id] || `#${c.id}`, P(c.centre), '#3DDC84', c.mm);
+  for (const u of res.unread) label('?', P(u.centre), '#FF5A4E', u.mm);
 }
 
 // A buzz where the phone can, and a two-note chime.
@@ -291,12 +304,31 @@ function cameraProblem(e) {
   return `The camera stopped: ${(e && e.message) || 'something went wrong'}.`;
 }
 
+function closeScanner() {
+  $('live').hidden = true;
+  document.documentElement.classList.remove('scanning');
+  drawOverlay(null);
+}
+
 function stopLive(message) {
   if (live) live.stop();
   live = null;
-  $('live').hidden = true;
-  drawOverlay(null);
+  closeScanner();
   if (message) $('status').textContent = message;
+}
+
+// What the scan found, laid out for the results: the cards in the last frame where
+// they lie in it, and any found earlier, in other views, in a list.
+function scanResult(found, last) {
+  const ids = new Set(found.map(c => c.id));
+  const here = new Map((last ? last.cards : []).filter(c => ids.has(c.id)).map(c => [c.id, c]));
+  const order = Object.values(CARD_MARKERS);
+  const cards = found.map(c => here.get(c.id) || { id: c.id, centre: null, ring: null, contrast: c.contrast, errors: c.errors })
+    .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  const rows = here.size === found.length && last
+    ? last.rows.map(r => r.filter(c => ids.has(c.id))).filter(r => r.length)
+    : [cards];
+  return { markers: last ? last.markers : [], cards, unread: last ? last.unread : [], loose: last ? last.loose : [], doubles: [], rows };
 }
 
 async function startLive() {
@@ -309,11 +341,12 @@ async function startLive() {
   } catch (e) { audio = null; }
   $('results').hidden = true;
   $('live').hidden = false;
+  document.documentElement.classList.add('scanning');
   $('liveStatus').textContent = 'Starting the camera…';
+  $('liveCount').textContent = '';
   $('liveInfo').textContent = '';
-  setSteady(0);
+  $('settle').style.width = '0';
   drawOverlay(null);
-  $('live').scrollIntoView({ block: 'start', behavior: 'smooth' });
   keepAwake();
   try {
     live = await startLiveScan({
@@ -321,15 +354,20 @@ async function startLive() {
       onRead({ verdict, res, w, h, fps, camera }) {
         drawOverlay(res, w, h);
         $('liveStatus').textContent = describe(verdict);
-        setSteady(verdict.state === 'steadying' ? verdict.run : verdict.state === 'locked' ? LOCK_READS : 0);
+        $('liveCount').textContent = verdict.count ? `${plural(verdict.count, 'card')}` : '';
+        $('settle').style.width = `${Math.round((verdict.settle || (verdict.state === 'locked' ? 1 : 0)) * 100)}%`;
         $('liveInfo').textContent = `Camera ${camera[0]} × ${camera[1]} · ${fps ? fps.toFixed(1) : '…'} reads a second`;
       },
-      onLock({ res, canvas, w, h }) {
+      onLock({ found, last: final, canvas, w, h, early }) {
         live = null;
-        chime();
-        $('live').hidden = true;
+        closeScanner();
+        // Cards found means frames were read, so there is a last frame to show.
+        if (!found.length || !final) { $('status').textContent = 'No cards were counted. Try again a little closer.'; return; }
+        if (!early) chime();
         last = null;
-        const text = show({ canvas, w, h }, res, `Locked on the cards: ${LOCK_READS} reads in a row agreed.`);
+        const res = scanResult(found, final);
+        const text = show({ canvas, w, h }, res, early ? `Finished by hand with ${plural(found.length, 'card')} counted.`
+          : 'Locked: no new card turned up for a second, and every card in view was read.');
         addToTally(res);
         canvas.toBlob(b => { if (b) last = { file: new File([b], 'live-scan.jpg', { type: 'image/jpeg' }), text }; }, 'image/jpeg', 0.92);
         $('results').scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -353,7 +391,8 @@ if (!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices
 }
 $('scanLive').addEventListener('click', startLive);
 $('scanMore').addEventListener('click', startLive);
-$('stopLive').addEventListener('click', () => stopLive('Stopped.'));
+$('stopLive').addEventListener('click', () => stopLive('Cancelled.'));
+$('finishLive').addEventListener('click', () => { if (live) live.finish(); else stopLive(); });
 $('startOver').addEventListener('click', startOver);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && live) stopLive('Scanning stopped when the page was hidden. Tap Scan live to carry on.');
