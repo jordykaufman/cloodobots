@@ -141,7 +141,7 @@ export function makeTableMap() {
       // Where the view was: the frame, or without its size, the area its cards cover.
       const xs = cards.map(c => c.centre[0]), ys = cards.map(c => c.centre[1]);
       const [x0, y0, x1, y1] = size ? [0, 0, size[0], size[1]] : [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-      view = { group: main.g, outline: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(p => apply(main.T, p)) };
+      view = { group: main.g, T: main.T, outline: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(p => apply(main.T, p)) };
       return true;
     },
     // Where the last view was: its group (by when the group began) and the view's centre
@@ -153,7 +153,9 @@ export function makeTableMap() {
     },
     // The groups, in the order they began: each card's position and axis in millimetres,
     // the group's rows of card ids (across the cards' short sides, as in a photo), and
-    // whether the last view was in it; plus that view's outline.
+    // whether the last view was in it; plus that view's outline, and `frame`, to find a
+    // point of the view's group in the view's own pixels (toFrame) and the view's pixels
+    // per millimetre (ppm).
     snapshot() {
       return {
         groups: groups.slice().sort((a, b) => a.begun - b.begun).map(g => {
@@ -161,6 +163,7 @@ export function makeTableMap() {
           return { cards, rows: rowsOf(cards).map(r => r.map(c => c.id)), current: !!view && view.group === g };
         }),
         view: view ? view.outline : null,
+        frame: view ? { toFrame: (T => p => unapply(T, p))(view.T), ppm: 1 / view.T.s } : null,
       };
     },
   };

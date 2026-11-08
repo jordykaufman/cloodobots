@@ -219,8 +219,8 @@ function startOver() {
 /* ---------- the table map ---------- */
 
 // Draws the table as a live scan has pieced it together: each group's cards as card
-// shapes, groups side by side, scaled to fit. `inView` marks the cards the camera sees
-// now (drawn brighter), and the last view's outline is drawn round them. With `names`,
+// shapes (every one counted), groups side by side, scaled to fit. `inView` marks the
+// cards the camera sees now (outlined), and the last view's outline is drawn too. With `names`,
 // each card is labelled. `width` and `height` are in CSS pixels; without `height`, the
 // canvas takes the map's own shape.
 const MAP_CARD = { w: 56, h: 87 };
@@ -256,9 +256,10 @@ function paintMap(cv, map, { names = false, inView = new Set(), width = cv.clien
     const path = pts => { ctx.beginPath(); pts.map(P).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
     for (const c of g.cards) {
       path(corners(c));
-      ctx.fillStyle = names ? '#141B2A' : inView.has(c.id) ? '#3DDC84' : 'rgba(61, 220, 132, .4)';
+      ctx.fillStyle = names ? '#141B2A' : '#3DDC84';
       ctx.fill();
       if (names) { ctx.strokeStyle = '#D9B46A'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      else if (inView.has(c.id)) { ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2; ctx.stroke(); }
     }
     if (g.current && map.view && !names) {
       path(map.view);
@@ -292,6 +293,31 @@ function paintMap(cv, map, { names = false, inView = new Set(), width = cv.clien
 
 let live = null, starting = false, audio = null;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const DECK_SIZE = Object.keys(CARD_MARKERS).length;
+
+// How many cards the scan should find before it stops: the whole deck, a number, or
+// however many there are (0), when it stops once the phone is held still.
+const EXPECT_KEY = 'crp/cardtest-expect';
+function setupExpect() {
+  const sel = $('expect');
+  const options = [[DECK_SIZE, `all ${DECK_SIZE} cards`], ...Array.from({ length: DECK_SIZE - 1 }, (_, i) => [DECK_SIZE - 1 - i, plural(DECK_SIZE - 1 - i, 'card')]), [0, 'however many there are']];
+  sel.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+  let saved = null;
+  try { saved = localStorage.getItem(EXPECT_KEY); } catch (e) { /* not kept */ }
+  sel.value = saved !== null && options.some(([v]) => String(v) === saved) ? saved : String(DECK_SIZE);
+  sel.addEventListener('change', () => { try { localStorage.setItem(EXPECT_KEY, sel.value); } catch (e) { /* not kept */ } });
+}
+const expected = () => Number($('expect').value) || 0;
+
+// The cards still to find, named while there are only a few, when scanning the whole deck.
+function toGo(v) {
+  const want = expected();
+  if (!want || v.count >= want) return '';
+  const left = want - v.count;
+  if (want !== DECK_SIZE) return ` ${left} to go.`;
+  const have = new Set(v.ids), names = Object.entries(CARD_MARKERS).filter(([, id]) => !have.has(id)).map(([n]) => n);
+  return names.length <= 4 ? ` Still to find: ${names.join(', ')}.` : ` ${left} to go.`;
+}
 
 function describe(v) {
   switch (v.state) {
@@ -300,19 +326,21 @@ function describe(v) {
       if (!v.unread) return 'Hold steady…';
       return v.small ? `Can’t read ${plural(v.unread, 'card')} yet: move a little closer.`
         : `Can’t read ${plural(v.unread, 'card')}: tilt away from the light, or hold steadier.`;
-    case 'collecting': return 'Reading the cards: hold still…';
-    case 'settling': return 'Got the cards in view. Hold still, or move on to more.';
+    case 'collecting': return 'Reading the cards…';
+    case 'settling': return expected() ? `Got the cards in view.${toGo(v)} Move on to the rest.` : 'Got the cards in view. Hold still to finish, or move on to more.';
     case 'locked': return 'Done.';
-    default: return v.count ? 'No cards in view. Point at the ones not counted yet.' : 'Point the camera at the cards, lying face-down.';
+    default: return v.count ? `No cards in view.${toGo(v) || ' Point at the ones not counted yet.'}` : 'Point the camera at the cards, lying face-down.';
   }
 }
 
 // Draws what the last read found over the camera view: each card's corner marks, its
-// circle (green when read, red when its ring couldn't be read) and its name. A read
+// circle and its name, with a tick once it counts (green when counted, white when read
+// but not counted yet, red when its ring couldn't be read). Cards counted earlier keep
+// their tick and name where the map puts them in this view, read again or not. A read
 // describes a frame from a moment ago, so while the phone moves the drawing trails the
 // cards: it fades unless a fresh read replaces it, after a bit longer than reads take.
 let readGap = 300, lastDraw = 0;
-function drawOverlay(res, fw, fh) {
+function drawOverlay(res, fw, fh, counted = new Set(), map = null) {
   const video = $('video'), cv = $('overlay');
   const now = performance.now();
   if (res && lastDraw) readGap = 0.7 * readGap + 0.3 * Math.min(2000, now - lastDraw);
@@ -343,10 +371,9 @@ function drawOverlay(res, fw, fh) {
     return [c[0] + M[0] * u + M[1] * v, c[1] + M[2] * u + M[3] * v];
   }));
   ctx.lineWidth = 3;
-  for (const [list, colour] of [[res.cards, '#3DDC84'], [res.unread, '#FF5A4E']]) {
-    ctx.strokeStyle = colour;
-    for (const card of list) if (card.ring) { circle(card.ring); ctx.stroke(); }
-  }
+  for (const card of res.cards) if (card.ring) { ctx.strokeStyle = counted.has(card.id) ? '#3DDC84' : '#FFFFFF'; circle(card.ring); ctx.stroke(); }
+  ctx.strokeStyle = '#FF5A4E';
+  for (const card of res.unread) if (card.ring) { circle(card.ring); ctx.stroke(); }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   // Names sized to fit across their card.
@@ -359,8 +386,20 @@ function drawOverlay(res, fw, fh) {
     ctx.fillStyle = colour;
     ctx.fillText(text, x, y + 1);
   };
-  for (const c of res.cards) label(NAME[c.id] || `#${c.id}`, P(c.centre), '#3DDC84', c.mm);
+  const name = id => NAME[id] || `#${id}`;
+  for (const c of res.cards) label(counted.has(c.id) ? `✓ ${name(c.id)}` : name(c.id), P(c.centre), counted.has(c.id) ? '#3DDC84' : '#FFFFFF', c.mm);
   for (const u of res.unread) label('?', P(u.centre), '#FF5A4E', u.mm);
+  // Counted cards not read in this frame, where the map says they are.
+  const group = map && map.frame && map.groups.find(g => g.current);
+  if (group) {
+    const here = new Set(res.cards.map(c => c.id)), ppm = map.frame.ppm;
+    for (const c of group.cards) {
+      if (here.has(c.id)) continue;
+      const [x, y] = map.frame.toFrame(c.centre);
+      if (x < 0 || y < 0 || x > fw || y > fh) continue;
+      label(`✓ ${name(c.id)}`, P([x, y]), '#3DDC84', ppm);
+    }
+  }
 }
 
 // A buzz where the phone can, and a two-note chime.
@@ -435,13 +474,17 @@ async function startLive() {
   try {
     live = await startLiveScan({
       video: $('video'),
+      expected: expected(),
       onRead({ verdict, res, w, h, fps, camera }) {
-        drawOverlay(res, w, h);
+        drawOverlay(res, w, h, new Set(verdict.ids), verdict.map);
         $('liveStatus').textContent = describe(verdict);
         const groups = verdict.map ? verdict.map.groups.length : 0;
-        $('liveCount').textContent = verdict.count ? `${plural(verdict.count, 'card')}${groups > 1 ? ` · ${groups} groups` : ''}` : '';
+        $('liveCount').textContent = (expected() ? `${verdict.count} of ${expected()}` : verdict.count ? plural(verdict.count, 'card') : '') + (groups > 1 ? ` · ${groups} groups` : '');
         paintMap($('minimap'), verdict.map, { inView: new Set(res.cards.map(c => c.id)), width: $('minimap').clientWidth, height: $('minimap').clientHeight });
-        $('settle').style.width = `${Math.round((verdict.settle || (verdict.state === 'locked' ? 1 : 0)) * 100)}%`;
+        // The bar: how many of the cards it's looking for it has, or how long it's been
+        // held still when it doesn't know how many.
+        const bar = expected() ? Math.min(1, verdict.count / expected()) : verdict.settle || (verdict.state === 'locked' ? 1 : 0);
+        $('settle').style.width = `${Math.round(bar * 100)}%`;
         $('liveInfo').textContent = `Camera ${camera[0]} × ${camera[1]} · ${fps ? fps.toFixed(1) : '…'} reads a second`;
       },
       onLock({ found, map, last: final, canvas, w, h, early }) {
@@ -453,7 +496,8 @@ async function startLive() {
         last = null;
         const res = scanResult(found, final, map);
         const text = show({ canvas, w, h }, res, early ? `Finished by hand with ${plural(found.length, 'card')} counted.`
-          : 'Locked: no new card turned up for a second, and every card in view was read.', map);
+          : expected() && found.length >= expected() ? `Found all ${plural(expected(), 'card')} it was looking for.`
+            : 'Stopped: you held still with every card in view read and nothing new turning up.', map);
         addToTally(res);
         canvas.toBlob(b => { if (b) last = { file: new File([b], 'live-scan.jpg', { type: 'image/jpeg' }), text }; }, 'image/jpeg', 0.92);
         $('results').scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -475,6 +519,7 @@ if (!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices
   $('scanLive').disabled = true;
   $('status').textContent = 'Live scanning needs the camera, which this browser won’t give this page. Take a photo instead.';
 }
+setupExpect();
 $('scanLive').addEventListener('click', startLive);
 $('scanMore').addEventListener('click', startLive);
 $('stopLive').addEventListener('click', () => stopLive('Cancelled.'));

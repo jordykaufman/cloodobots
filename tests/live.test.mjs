@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeTracker, slim, unslim, SETTLE_MS, CONFIRM_WITHIN } from '../js/live-scan.js';
+import { makeTracker, slim, unslim, SETTLE_MS, CONFIRM_WITHIN, SURE_ERRORS } from '../js/live-scan.js';
 import { readLayout, CARD_SIZES } from '../js/backs.js';
 import { CARD_MARKERS } from '../js/markers.js';
 import { paintBezels } from './paint.mjs';
@@ -10,8 +10,8 @@ const card = (id, mm = 7) => ({ id, centre: [100 + (id % 5) * 70 * mm, 120 + Mat
 const read = ({ cards = [], unread = [], markers = [{ id: 34 }], doubles = [], loose = [] } = {}) => ({ cards, unread, markers, doubles, loose, rows: [cards], size: [1440, 2160] });
 const seen = (...ids) => read({ cards: ids.map(id => card(id)) });
 const counted = tracker => [...tracker.found.keys()].sort((a, b) => a - b);
-// A verdict without the map it carries.
-const plain = ({ map, ...v }) => v;
+// A verdict without the map and the list of cards it carries.
+const plain = ({ map, ids, ...v }) => v;
 
 // Feeds reads to a tracker, one every `gap` ms, and returns the last verdict.
 function feed(tracker, reads, start = 0, gap = 200) {
@@ -116,4 +116,30 @@ test('doesn’t lock while the phone is moving, even with nothing new in view', 
   held.cards.forEach(c => { c.centre = [c.centre[0], c.centre[1] - 70 * 7]; });
   assert.equal(t.add(held, 2600).state, 'settling');
   assert.equal(t.add(held, 2600 + SETTLE_MS).state, 'locked');
+});
+
+test('counts a card on one clean read, but needs two when its ring read roughly', () => {
+  const t = makeTracker();
+  const clean = card(3), rough = card(8);
+  clean.errors = SURE_ERRORS;
+  rough.errors = SURE_ERRORS + 4;
+  const v = t.add(read({ cards: [clean, rough] }), 0);
+  assert.deepEqual(v.ids, [3]);
+  assert.deepEqual(t.add(read({ cards: [clean, rough] }), 200).ids, [3, 8]);
+});
+
+test('told how many cards to find, stops the moment it has them, moving or not', () => {
+  const t = makeTracker({ expected: 3 });
+  feed(t, [seen(1, 2), seen(1, 2)]);
+  const v = t.add(seen(2, 9), 400);
+  assert.equal(v.state, 'collecting');
+  // The third card counts on its second read: done, though the view has just moved and
+  // there's a card it can't read at the edge.
+  const last = read({ cards: [card(9), card(2)], unread: [{ centre: [0, 0], mm: 7, ring: {} }] });
+  last.cards.forEach(c => { c.centre = [c.centre[0] + 300, c.centre[1]]; });
+  assert.deepEqual(plain(t.add(last, 600)), { state: 'locked', count: 3, complete: true });
+  // Looking for more than are there, holding still doesn't end it.
+  const short = makeTracker({ expected: 5 });
+  const v2 = feed(short, Array.from({ length: 20 }, () => seen(1, 2)));
+  assert.equal(v2.state, 'settling');
 });
