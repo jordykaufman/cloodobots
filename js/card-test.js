@@ -13,6 +13,9 @@ const MAX_SIDE = 4032;
 
 const $ = id => document.getElementById(id);
 
+// The photo last read and what the page said about it, for the save button.
+let last = null;
+
 async function loadPhoto(file) {
   let source;
   try {
@@ -120,6 +123,36 @@ function show(photo, res, ms) {
   $('results').hidden = false;
   draw(photo, res);
   $('status').textContent = `Read a ${photo.w} × ${photo.h} photo in ${(ms / 1000).toFixed(1)} s.`;
+  return [summary, ...notes, ...rows.map((row, r) => `Row ${r + 1}: ${row.map(c => NAME[c.id]).join(', ')}`)].join('\n');
+}
+
+const stamp = () => {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+};
+
+// Hands the photo on, untouched, with what the page said about it: through the phone's
+// share sheet where there is one (to Google Drive, a message, an email), otherwise as
+// a download.
+async function save() {
+  if (!last) return;
+  const ext = (last.file.name.match(/\.(\w+)$/) || [, last.file.type.split('/')[1] || 'jpg'])[1].replace(/^jpeg$/i, 'jpg');
+  const file = new File([last.file], `card-test-${stamp()}.${ext}`, { type: last.file.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: 'Card back test photo', text: last.text });
+    } catch (e) {
+      if (e.name !== 'AbortError') $('status').textContent = `Couldn’t share the photo: ${e.message}`;
+    }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 
 async function handle(file) {
@@ -132,7 +165,7 @@ async function handle(file) {
     const t0 = performance.now();
     const data = photo.ctx.getImageData(0, 0, photo.w, photo.h).data;
     const res = readLayout(grayOf(data, photo.w, photo.h));
-    show(photo, res, performance.now() - t0);
+    last = { file, text: show(photo, res, performance.now() - t0) };
   } catch (e) {
     $('status').textContent = e.message || 'Something went wrong reading that photo.';
   }
@@ -141,3 +174,4 @@ async function handle(file) {
 for (const id of ['camera', 'library']) {
   $(id).addEventListener('change', e => { handle(e.target.files[0]); e.target.value = ''; });
 }
+$('save').addEventListener('click', save);

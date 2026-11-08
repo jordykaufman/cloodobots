@@ -20,6 +20,7 @@ body { margin: 0; }
 .rows li { display: grid; gap: 6px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .rows .label { margin: 0; }
 .missing { color: var(--bad); font-weight: 650; }
+.save { display: grid; gap: 6px; justify-items: start; }
 .shot { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); }
 .sizes { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .sizes th, .sizes td { padding: 8px 6px; text-align: center; border-bottom: 1px solid var(--line); }
@@ -49,6 +50,10 @@ body { margin: 0; }
   <section class="panel" id="results" hidden>
     <p class="summary" id="summary"></p>
     <p class="missing" id="missing" hidden></p>
+    <div class="save">
+      <button class="btn btn--ghost" type="button" id="save">Save or share this photo</button>
+      <p class="hint">Photos taken from this page aren’t kept by the phone. Share this one to Google Drive, or send it on, so the reader can be tuned on real photos.</p>
+    </div>
     <div id="rowsBox" hidden>
       <h2 class="h2">Rows, from the top of the photo</h2>
       <ol class="rows" id="rows"></ol>
