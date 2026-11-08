@@ -442,15 +442,18 @@ function stopLive(message) {
 }
 
 // What the scan found, laid out for the results: the groups of cards on the map, each
-// with its rows, and any card counted but never placed on the map.
-function scanResult(found, final, map) {
+// with its rows, and any card counted but never placed on the map. Cards the last frame
+// couldn't read are reported only when the scan didn't find all it was looking for:
+// otherwise they were counted from other frames.
+function scanResult(found, final, map, complete) {
   const byId = new Map(found.map(c => [c.id, c]));
   const groups = (map ? map.groups : []).map(g => ({ rows: g.rows.map(r => r.filter(id => byId.has(id)).map(id => byId.get(id))).filter(r => r.length) }))
     .filter(g => g.rows.length);
   const placed = new Set(groups.flatMap(g => g.rows.flat().map(c => c.id)));
   const unplaced = found.filter(c => !placed.has(c.id));
   if (unplaced.length) groups.push({ rows: [unplaced], unplaced: true });
-  return { markers: final ? final.markers : [], cards: found, unread: final ? final.unread : [], loose: final ? final.loose : [], doubles: [], rows: groups.flatMap(g => g.rows), groups };
+  const leftovers = final && !complete;
+  return { markers: final ? final.markers : [], cards: found, unread: leftovers ? final.unread : [], loose: leftovers ? final.loose : [], doubles: [], rows: groups.flatMap(g => g.rows), groups };
 }
 
 async function startLive() {
@@ -494,9 +497,10 @@ async function startLive() {
         if (!found.length || !final) { $('status').textContent = 'No cards were counted. Try again a little closer.'; return; }
         if (!early) chime();
         last = null;
-        const res = scanResult(found, final, map);
+        const complete = expected() > 0 && found.length >= expected();
+        const res = scanResult(found, final, map, complete);
         const text = show({ canvas, w, h }, res, early ? `Finished by hand with ${plural(found.length, 'card')} counted.`
-          : expected() && found.length >= expected() ? `Found all ${plural(expected(), 'card')} it was looking for.`
+          : complete ? `Found all ${plural(expected(), 'card')} it was looking for.`
             : 'Stopped: you held still with every card in view read and nothing new turning up.', map);
         addToTally(res);
         canvas.toBlob(b => { if (b) last = { file: new File([b], 'live-scan.jpg', { type: 'image/jpeg' }), text }; }, 'image/jpeg', 0.92);
