@@ -252,8 +252,11 @@ def page_one(c, pages, bezel=False):
          if bezel else 'Each card carries its code in two corners, 8 mm across: top left, and bottom right turned upside down. The other two corners hold a decoy that is the same on every card.'),
     ], size=9.5)
 
-    # The 100 mm check.
-    x0, yb = 18 * mm, 22 * mm
+    scale_bar(c, 18 * mm, 22 * mm)
+
+
+def scale_bar(c, x0, yb, note='This bar should measure 100 mm.'):
+    """The 100 mm check: a ruled bar with its left end at (x0, yb), and a note after it."""
     c.setStrokeColor(INK)
     c.setLineWidth(0.6)
     c.line(x0, yb, x0 + 100 * mm, yb)
@@ -265,7 +268,7 @@ def page_one(c, pages, bezel=False):
         if i % 5 == 0:
             c.drawCentredString(x0 + i * 10 * mm, yb + 4.2 * mm, f'{i * 10}')
     c.setFont('Helvetica', 9)
-    c.drawString(x0 + 104 * mm, yb - 1, 'This bar should measure 100 mm.')
+    c.drawString(x0 + 104 * mm, yb - 1, note)
 
 
 def card_pages(c, names, bezel=False, fronts=False, size=TEST_SHEET):
@@ -343,14 +346,25 @@ def build(out, bezel):
 
 
 def build_double_sided(out, size=TEST_SHEET, title='Card back test sheet: bezel, double-sided'):
-    """Just the card pages, each followed by its fronts, for printing double-sided."""
+    """Just the card pages, each followed by its fronts, for printing double-sided. Each
+    page of backs says how to print it, and how wide a card should come out: a printer
+    told to fit the page shrinks the cards."""
     order = list(CARD_MARKERS)
     c = canvas.Canvas(str(out), pagesize=A4)
     c.setTitle(title)
     c.setAuthor('Cluedo Robot Players')
+    W, H = A4
     for i in range(0, len(order), 9):
         names = order[i:i + 9]
         card_pages(c, names, True, size=size)
+        # How to print it, in the margin above the cards, shrunk to fit if need be.
+        note = f'Print double-sided at 100% (“Actual size”, not “Fit to page”), flipping on the long edge. Each card should be {size["w"] / mm:.0f} mm across.'
+        pt = 8
+        while c.stringWidth(note, 'Helvetica-Bold', pt) > W - 36 * mm:
+            pt -= 0.25
+        c.setFillColor(INK)
+        c.setFont('Helvetica-Bold', pt)
+        c.drawCentredString(W / 2, H - 7 * mm, note)
         c.showPage()
         card_pages(c, names, True, fronts=True, size=size)
         c.showPage()
