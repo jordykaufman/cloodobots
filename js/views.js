@@ -419,6 +419,12 @@ function countLine(have, need) {
   return `${have} of ${need} picked`;
 }
 
+// The host's way out of tapping cards in: back to setup, after a check. Without it a
+// game left at this step came back on every reload with no way to start another.
+const backToSetup = () => !isHost() ? '' : C.view.confirm === 'cancelGame'
+  ? confirmBox('Go back to setup? The cards entered so far are cleared.', 'newGame', 'Back to setup', 'Stay here')
+  : '<p><button class="link" data-act="confirm" data-what="cancelGame">Back to setup</button></p>';
+
 function viewHands() {
   const g = C.M.game;
   const people = C.M.seats.filter(s => !s.robot);
@@ -434,7 +440,8 @@ function viewHands() {
   ${todo.length ? `<div class="stack">${todo.map(s => `<button class="btn btn--primary btn--big btn--left" data-act="enter" data-seat="${s.id}">${icon('lock')} Enter ${esc(s.name)}’s cards</button>`).join('')}</div>` : ''}
   <ul class="dealt">${people.map(s => `<li>${who(s)}<span class="meta">${g.submitted[s.id] ? 'cards saved' : 'not yet'}</span></li>`).join('')}</ul>
   ${waiting.length && !todo.length ? `<p class="sub">Still waiting for ${waiting.map(s => esc(s.name)).join(' and ')}.</p>` : ''}
-  ${mine().some(s => g.submitted[s.id]) ? `<p>${mine().filter(s => g.submitted[s.id]).map(s => `<button class="link" data-act="unsubmit" data-seat="${s.id}">Change ${esc(s.name)}’s cards</button>`).join(' · ')}</p>` : ''}`;
+  ${mine().some(s => g.submitted[s.id]) ? `<p>${mine().filter(s => g.submitted[s.id]).map(s => `<button class="link" data-act="unsubmit" data-seat="${s.id}">Change ${esc(s.name)}’s cards</button>`).join(' · ')}</p>` : ''}
+  ${backToSetup()}`;
 }
 
 function viewEnter(s, errBox = '') {
@@ -449,6 +456,7 @@ function viewEnter(s, errBox = '') {
   ${errBox}
   ${CATS.map(cat => `<fieldset class="group group--${cat}"><legend class="label">${icon(cat)} ${CATS_PL[cat]}</legend>
     <div class="chips">${ofCat(cat).map(c => checkChip(c, sel.includes(c.id))).join('')}</div></fieldset>`).join('')}
+  ${backToSetup()}
   <div class="bar bar--sticky">
     <span class="count${sel.length > need ? ' count--over' : ''}" id="count" aria-live="polite">${countLine(sel.length, need)}</span>
     <button class="btn btn--primary" id="saveHand" data-act="saveHand" data-seat="${s.id}"${sel.length === need ? '' : ' disabled'}>Save my cards</button>

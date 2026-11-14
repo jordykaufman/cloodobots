@@ -223,6 +223,16 @@ function follow(m) {
 
 /* ---------- drawing ---------- */
 let lastKey = '';
+let lastAsked = null;
+
+// Scrolls a question the page has just put up into full view. On a long screen it opens
+// near the bottom, part of it past the screen's edge or under the bar that sticks there.
+function wholeInView(box) {
+  const bar = $app.querySelector('.bar--sticky');
+  const room = window.innerHeight - (bar ? bar.getBoundingClientRect().height : 0) - 12;
+  const over = box.getBoundingClientRect().bottom - room;
+  if (over > 0) window.scrollBy(0, over);
+}
 function render() {
   const ui = R.ui;
   let v = ui.view;
@@ -248,6 +258,10 @@ function render() {
     scan: R.scan, storageOK: R.storageOK, cameraOK: R.cameraOK,
   });
   store.set(K.ui, { ...ui, role: R.role, code: R.role === 'client' ? R.code : null });
+
+  const asked = v.confirm || null;
+  if (asked && asked !== lastAsked) { const box = $app.querySelector('.confirm'); if (box) wholeInView(box); }
+  lastAsked = asked;
 
   const key = [v.name, v.stage, v.seat, v.n, v.i, v.open, v.idx].join('|');
   if (key !== lastKey) {
