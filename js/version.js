@@ -2,4 +2,4 @@
 // page so it's clear which version a phone is running (a phone can keep the previous one
 // for a few minutes).
 // Update it with each change to the site.
-export const UPDATED = '2026-11-14T11:55:00Z';
+export const UPDATED = '2026-11-14T12:42:00Z';
